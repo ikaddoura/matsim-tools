@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MATSim Railsim Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; }
+        #controls { margin-bottom: 20px; padding: 15px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        label { display: inline-block; margin-bottom: 5px; font-weight: bold; margin-right: 10px; vertical-align: middle;}
+        input[type="file"] { margin-bottom: 10px; }
+        input[type="range"], select { vertical-align: middle; margin-bottom: 10px;}
+        button { padding: 8px 12px; margin-right: 10px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 10px; font-size: 0.9em;}
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        button:hover:not(:disabled) { background-color: #0056b3; }
+        .toggle-button.active { background-color: #28a745; }
+        .toggle-button { background-color: #dc3545; }
+
+        #visualizationArea { text-align: center; }
+        #networkCanvas { border: 1px solid #ccc; background-color: #fff; cursor: grab;}
+        #networkCanvas:active { cursor: grabbing; }
+        #timeDisplay { font-size: 1.2em; margin-bottom: 10px; font-weight: bold; }
+        .status { margin-top: 10px; font-style: italic; color: #555; }
+        .slider-container, .config-container, .file-input-row { margin-bottom: 15px; }
+        .slider-container span, .config-container span { margin-left: 10px; vertical-align: middle; }
+        .file-input-row { display: flex; align-items: center; flex-wrap: wrap; }
+        .file-input-row label { min-width: 200px; }
+        .file-input-row input[type="file"] { margin-right: 5px; }
+        .file-input-row .toggle-button { margin-left: 5px; padding: 6px 10px; font-size: 0.8em; }
+    </style>
+</head>
+<body>
+    <h1>MATSim Railsim Visualizer</h1>
+
+    <div id="controls">
+        <div class="file-input-row">
+            <label for="networkFile">Network File (network.xml.gz):</label>
+            <input type="file" id="networkFile" accept=".xml.gz,.gz" required>
+        </div>
+        <div class="file-input-row">
+            <label for="trainStatesFile">Train States (coords):</label>
+            <input type="file" id="trainStatesFile" accept=".csv.gz,.gz">
+            <button id="toggleTrainStatesCoordsButton" class="toggle-button active" disabled>Coords Trains: ON</button>
+        </div>
+        <div class="file-input-row">
+            <label for="linkStatesFile">Link States:</label>
+            <input type="file" id="linkStatesFile" accept=".csv.gz,.gz">
+            <button id="toggleLinkStatesButton" class="toggle-button active" disabled>Link States: ON</button>
+        </div>
+        <div class="file-input-row">
+            <label for="eventsFile">Events File (events.xml.gz):</label>
+            <input type="file" id="eventsFile" accept=".xml.gz,.gz">
+            <button id="toggleEventVehiclesButton" class="toggle-button active" disabled>Event Vehicles: ON</button>
+        </div>
+        <hr>
+        <div>
+            <button id="playButton" disabled>Play</button>
+            <button id="stopButton" disabled>Stop</button>
+            <button id="resetViewButton">Reset View</button>
+        </div>
+        <div id="timeDisplay">Time: N/A</div>
+
+        <div class="slider-container">
+            <label for="timeSlider">Event Step:</label>
+            <input type="range" id="timeSlider" min="0" max="0" value="0" style="width: 60%;" disabled>
+            <span id="currentTimeDisplay">00:00:00</span>
+        </div>
+
+        <div class="slider-container">
+            <label for="speedSlider">Anim. Speed:</label>
+            <input type="range" id="speedSlider" min="1" max="2500" value="50" style="width: 40%;">
+            <span id="currentSpeedDisplay">1.0x</span>
+        </div>
+        <div class="slider-container">
+            <label for="linkWidthSlider">Link Width:</label>
+            <input type="range" id="linkWidthSlider" min="0.1" max="5" value="1" step="0.1" style="width: 40%;">
+            <span id="currentLinkWidthDisplay">1.0px</span>
+        </div>
+         <div class="config-container">
+            <label for="trainColorModeSelect">Vehicle Colors:</label>
+            <select id="trainColorModeSelect">
+                <option value="random">Random (Per Vehicle)</option>
+                <option value="red">All Red</option>
+                <option value="blue">All Blue</option>
+                <option value="black">All Black</option>
+                <option value="gray">All Gray</option>
+            </select>
+        </div>
+        <div id="status" class="status">Load network file to begin.</div>
+    </div>
+
+    <div id="visualizationArea">
+        <canvas id="networkCanvas" width="1000" height="700"></canvas>
+    </div>
+
+    <script>
+        // DOM Elements
+        const networkFileInput = document.getElementById('networkFile');
+        const trainStatesFileInput = document.getElementById('trainStatesFile');
+        const linkStatesFileInput = document.getElementById('linkStatesFile');
+        const eventsFileInput = document.getElementById('eventsFile');
+        const playButton = document.getElementById('playButton');
+        const stopButton = document.getElementById('stopButton');
+        const resetViewButton = document.getElementById('resetViewButton');
+        const toggleEventVehiclesButton = document.getElementById('toggleEventVehiclesButton');
+        const toggleLinkStatesButton = document.getElementById('toggleLinkStatesButton');
+        const toggleTrainStatesCoordsButton = document.getElementById('toggleTrainStatesCoordsButton');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const statusDisplay = document.getElementById('status');
+        const canvas = document.getElementById('networkCanvas');
+        const ctx = canvas.getContext('2d');
+        const timeSlider = document.getElementById('timeSlider');
+        const currentTimeDisplay = document.getElementById('currentTimeDisplay');
+        const speedSlider = document.getElementById('speedSlider');
+        const currentSpeedDisplay = document.getElementById('currentSpeedDisplay');
+        const linkWidthSlider = document.getElementById('linkWidthSlider');
+        const currentLinkWidthDisplay = document.getElementById('currentLinkWidthDisplay');
+        const trainColorModeSelect = document.getElementById('trainColorModeSelect');
+
+        // Data Structures
+        let networkData = { nodes: {}, links: [] , linksById: {}};
+        let allTrainEventsByTime = {};
+        let activeTrainsLastKnownState = {};
+        let allLinkEventsByTime = {};
+        let activeLinksLastKnownState = {};
+        let allVehicleLinkTravels = {};
+        let activeEventVehiclesCurrentPosition = {};
+        
+        // Layer Toggles
+        let showEventVehicles = true;
+        let showLinkStates = true;
+        let showTrainStatesFromCoords = true;
+
+        // Animation & Time Control
+        let sortedTimestamps = [];
+        let currentTimestampIndex = 0;
+        let visualisationTime = 0;
+        let animationFrameId = null;
+        let isPlaying = false;
+        let lastAnimationFrameTime = 0;
+        let initialStatesAppliedForVisualisationTime = false;
+
+        // View & Style
+        let worldBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+        let scale = 1; let offsetX = 0; let offsetY = 0;
+        const MIN_ZOOM = 0.05; const MAX_ZOOM = 50;
+        const MAX_PLAYBACK_SPEED_FACTOR = 500.0; // Max speed set to 500x
+        let playbackSpeedFactor = 1.0; 
+        let currentLinkWidth = 1.0;
+        let isPanning = false; let lastPanX; let lastPanY;
+        let trainColorMode = "random";
+        const randomTrainColorsList = ["#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500", "#800080", "#008000", "#A52A2A", "#FFC0CB", "#008080", "#800000", "#808000"];
+        let assignedTrainColorsCache = {}; let randomColorIndex = 0;
+        const LINK_STATE_COLORS = { "EMPTY": "#CCCCCC", "IN_USE": "#87CEEB", "RESERVED": "#ADD8E6", "EXHAUSTED": "#FF4500", "BLOCKED": "#708090", "DEFAULT": "#AAAAAA", "UNKNOWN": "#D3D3D3" };
+
+        // --- File Loading and Parsing ---
+        async function readFileAsArrayBuffer(file) { 
+            return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsArrayBuffer(file); });
+        }
+        async function decompressAndParse(file, type) { 
+            if (!file) { if (type === 'network') statusDisplay.textContent = `Please select a ${type} file.`; return false; }
+            statusDisplay.textContent = `Loading ${type} file: ${file.name}...`;
+            try { const arrayBuffer = await readFileAsArrayBuffer(file); const decompressed = pako.inflate(new Uint8Array(arrayBuffer), { to: 'string' }); statusDisplay.textContent = `Decompressed ${type} file. Parsing...`; if (type === 'network') parseNetworkXml(decompressed); else if (type === 'trainStates') parseTrainStatesCsv(decompressed); else if (type === 'linkStates') parseLinkStatesCsv(decompressed); else if (type === 'events') parseEventsXml(decompressed); statusDisplay.textContent = `${type.charAt(0).toUpperCase() + type.slice(1)} data loaded.`; return true; }
+            catch (error) { console.error(`Error processing ${type} file:`, error); statusDisplay.textContent = `Error processing ${type} file: ${error.message}`; return false; }
+        }
+
+        function parseNetworkXml(xmlString) { 
+            const parser = new DOMParser(); const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+            networkData = { nodes: {}, links: [], linksById: {} }; worldBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+            const nodeElements = xmlDoc.getElementsByTagName("node");
+            for (let nodeEl of nodeElements) { const id = nodeEl.getAttribute("id"); const x = parseFloat(nodeEl.getAttribute("x")); const y = parseFloat(nodeEl.getAttribute("y")); networkData.nodes[id] = { id, x, y }; worldBounds.minX = Math.min(worldBounds.minX, x); worldBounds.maxX = Math.max(worldBounds.maxX, x); worldBounds.minY = Math.min(worldBounds.minY, y); worldBounds.maxY = Math.max(worldBounds.maxY, y); }
+            const linkElements = xmlDoc.getElementsByTagName("link");
+            for (let linkEl of linkElements) { const link = { id: linkEl.getAttribute("id"), from: linkEl.getAttribute("from"), to: linkEl.getAttribute("to"), length: parseFloat(linkEl.getAttribute("length")) }; networkData.links.push(link); networkData.linksById[link.id] = link; }
+            resetView();
+        }
+        function parseTrainStatesCsv(csvString) { 
+            allTrainEventsByTime = {}; activeTrainsLastKnownState = {}; clearTrainColorCache();
+            const lines = csvString.trim().split('\n'); if (lines.length < 1) { statusDisplay.textContent = "TrainStates CSV is empty."; toggleTrainStatesCoordsButton.disabled = true; return; }
+            const headerLine = lines[0].trim(); const headers = headerLine.split(',').map(h => h.trim());
+            const colNames = ["vehicle", "time", "speed", "headX", "headY", "tailX", "tailY"]; const indices = {}; colNames.forEach(col => indices[col] = headers.indexOf(col));
+            const missingHeaders = colNames.filter(col => indices[col] === -1 ); if (missingHeaders.length > 0) throw new Error(`TrainStates CSV headers missing: ${missingHeaders.join(', ')}. Found: [${headers.join(', ')}]`);
+            for (let i = 1; i < lines.length; i++) { const line = lines[i].trim(); if (!line) continue; const values = line.split(',').map(v => v.trim()); if (values.length < headers.length && values.length < Math.max(...Object.values(indices).filter(v=>v!=-1)) + 1) { console.warn(`Skipping malformed TrainStates CSV line ${i+1}`); continue; } const time = parseFloat(values[indices.time]); const vehicleId = values[indices.vehicle]; const speed = parseFloat(values[indices.speed]); const headX = parseFloat(values[indices.headX]); const headY = parseFloat(values[indices.headY]); const tailX = parseFloat(values[indices.tailX]); const tailY = parseFloat(values[indices.tailY]); if ([headX, headY, tailX, tailY, time, speed].some(isNaN) || !vehicleId) { console.warn(`Skipping TrainStates line ${i+1} due to invalid data.`); continue; } const trainState = { vehicle: vehicleId, time: time, speed: speed, headX: headX, headY: headY, tailX: tailX, tailY: tailY }; if (!allTrainEventsByTime[time]) allTrainEventsByTime[time] = {}; allTrainEventsByTime[time][vehicleId] = trainState; }
+            toggleTrainStatesCoordsButton.disabled = Object.keys(allTrainEventsByTime).length === 0;
+            updateGlobalTimestampsAndTimeline();
+        }
+        function parseLinkStatesCsv(csvString) {
+            allLinkEventsByTime = {}; activeLinksLastKnownState = {};
+            const lines = csvString.trim().split('\n'); if (lines.length < 1) { statusDisplay.textContent = "LinkStates CSV is empty."; toggleLinkStatesButton.disabled = true; return; }
+            const headerLine = lines[0].trim(); const headers = headerLine.split(',').map(h => h.trim()); const linkIndex = headers.indexOf("link"); const timeIndex = headers.indexOf("time"); const stateIndex = headers.indexOf("state"); const vehicleIndex = headers.indexOf("vehicle"); if ([linkIndex, timeIndex, stateIndex].some(idx => idx === -1)) throw new Error(`LinkStates CSV headers missing (link, time, state). Found: [${headers.join(', ')}]`);
+            for (let i = 1; i < lines.length; i++) { const line = lines[i].trim(); if (!line) continue; const values = line.split(',').map(v => v.trim()); if (values.length < headers.length && values.length < Math.max(linkIndex,timeIndex,stateIndex,vehicleIndex) + 1) { console.warn(`Skipping malformed LinkStates CSV line ${i+1}`); continue; } const linkId = values[linkIndex]; const time = parseFloat(values[timeIndex]); const state = values[stateIndex]; const vehicle = vehicleIndex !== -1 ? values[vehicleIndex] : null; if (!linkId || isNaN(time) || !state) { console.warn(`Skipping LinkStates line ${i+1} due to invalid data.`); continue; } const linkStateInfo = { state: state, vehicle: vehicle, time: time }; if (!allLinkEventsByTime[time]) allLinkEventsByTime[time] = {}; allLinkEventsByTime[time][linkId] = linkStateInfo; }
+            toggleLinkStatesButton.disabled = Object.keys(allLinkEventsByTime).length === 0;
+            updateGlobalTimestampsAndTimeline();
+        }
+        function parseEventsXml(xmlString) {
+            allVehicleLinkTravels = {}; const parser = new DOMParser(); const xmlDoc = parser.parseFromString(xmlString, "application/xml"); const eventElements = xmlDoc.getElementsByTagName("event");
+            for (let eventEl of eventElements) { const type = eventEl.getAttribute("type"); const time = parseFloat(eventEl.getAttribute("time")); const vehicleId = eventEl.getAttribute("vehicle") || eventEl.getAttribute("vehicleId"); const linkId = eventEl.getAttribute("link"); if (!vehicleId || isNaN(time)) continue; if ((type === "entered link" || type === "vehicle enters traffic") && linkId) { if (!allVehicleLinkTravels[vehicleId]) allVehicleLinkTravels[vehicleId] = []; const networkLink = networkData.linksById[linkId]; if (networkLink) allVehicleLinkTravels[vehicleId].push({ type: "entered", linkId: linkId, time: time, fromNodeId: networkLink.from, toNodeId: networkLink.to, linkLength: networkLink.length }); else console.warn(`Event: Link ID "${linkId}" not found for vehicle "${vehicleId}".`); } else if (type === "left link" && linkId) { if (!allVehicleLinkTravels[vehicleId]) allVehicleLinkTravels[vehicleId] = []; allVehicleLinkTravels[vehicleId].push({ type: "left", linkId: linkId, time: time }); } }
+            for (const vehicleId in allVehicleLinkTravels) allVehicleLinkTravels[vehicleId].sort((a, b) => a.time - b.time);
+            updateGlobalTimestampsAndTimeline();
+            toggleEventVehiclesButton.disabled = Object.keys(allVehicleLinkTravels).length === 0;
+        }
+        function updateGlobalTimestampsAndTimeline() {
+            const trainTimes = Object.keys(allTrainEventsByTime).map(parseFloat); const linkTimes = Object.keys(allLinkEventsByTime).map(parseFloat); let eventVehicleTimes = new Set(); for (const vehicleId in allVehicleLinkTravels) allVehicleLinkTravels[vehicleId].forEach(event => eventVehicleTimes.add(event.time)); const allTimes = new Set([...trainTimes, ...linkTimes, ...Array.from(eventVehicleTimes)]); sortedTimestamps = Array.from(allTimes).sort((a, b) => a - b); currentTimestampIndex = 0; activeTrainsLastKnownState = {}; activeLinksLastKnownState = {}; activeEventVehiclesCurrentPosition = {}; visualisationTime = 0; initialStatesAppliedForVisualisationTime = false; if (sortedTimestamps.length > 0) { const firstTime = sortedTimestamps[0]; visualisationTime = firstTime; rebuildActiveStatesUpToTime(visualisationTime); updateEventVehiclePositions(visualisationTime); updateTimeSliderMax(); updateTimeDisplays(visualisationTime, firstTime); timeSlider.disabled = false; } else { timeSlider.disabled = true; updateTimeDisplays(0, 0); if (Object.keys(networkData.nodes).length > 0) drawCurrentFrame(); }
+        }
+
+        networkFileInput.addEventListener('change', async (event) => { if (event.target.files.length > 0) { await decompressAndParse(event.target.files[0], 'network'); checkFilesLoaded(); }});
+        trainStatesFileInput.addEventListener('change', async (event) => { if (event.target.files.length > 0 && Object.keys(networkData.nodes).length > 0) await decompressAndParse(event.target.files[0], 'trainStates'); else if (event.target.files.length > 0) { statusDisplay.textContent = "Load Network first."; trainStatesFileInput.value = ""; } checkFilesLoaded(); });
+        linkStatesFileInput.addEventListener('change', async (event) => { if (event.target.files.length > 0 && Object.keys(networkData.nodes).length > 0) await decompressAndParse(event.target.files[0], 'linkStates'); else if (event.target.files.length > 0) { statusDisplay.textContent = "Load Network first."; linkStatesFileInput.value = ""; } checkFilesLoaded(); });
+        eventsFileInput.addEventListener('change', async (event) => { if (event.target.files.length > 0 && Object.keys(networkData.nodes).length > 0) await decompressAndParse(event.target.files[0], 'events'); else if (event.target.files.length > 0) { statusDisplay.textContent = "Load Network first."; eventsFileInput.value = ""; } checkFilesLoaded(); });
+
+        function checkFilesLoaded() {
+            const networkLoaded = Object.keys(networkData.nodes).length > 0; const hasEventData = sortedTimestamps.length > 0;
+            toggleEventVehiclesButton.disabled = Object.keys(allVehicleLinkTravels).length === 0;
+            toggleLinkStatesButton.disabled = Object.keys(allLinkEventsByTime).length === 0;
+            toggleTrainStatesCoordsButton.disabled = Object.keys(allTrainEventsByTime).length === 0;
+            if (networkLoaded) { playButton.disabled = !hasEventData; if (hasEventData) { statusDisplay.textContent = "Files loaded. Ready to play."; rebuildActiveStatesUpToTime(sortedTimestamps[0]); updateEventVehiclePositions(sortedTimestamps[0]); } else statusDisplay.textContent = "Network loaded. Load states/events to animate."; drawCurrentFrame(); } else { playButton.disabled = true; statusDisplay.textContent = "Load network file to begin."; }
+        }
+
+        function calculateInitialTransform() { if (worldBounds.minX === Infinity || worldBounds.maxX === -Infinity) { scale = 1; offsetX = canvas.width / 2; offsetY = canvas.height / 2; return; } const PADDING = 50; const worldWidth = worldBounds.maxX - worldBounds.minX; const worldHeight = worldBounds.maxY - worldBounds.minY; if (worldWidth === 0 || worldHeight === 0) scale = 1; else { const scaleX = (canvas.width - 2 * PADDING) / worldWidth; const scaleY = (canvas.height - 2 * PADDING) / worldHeight; scale = Math.min(scaleX, scaleY) * 0.95; } scale = Math.max(0.0001, scale); const canvasCenterX = canvas.width / 2; const canvasCenterY = canvas.height / 2; const worldCenterX = worldBounds.minX + worldWidth / 2; const worldCenterY = worldBounds.minY + worldHeight / 2; offsetX = canvasCenterX - worldCenterX * scale; offsetY = canvasCenterY + worldCenterY * scale; }
+        function worldToCanvas(x_world, y_world) { const canvasX = x_world * scale + offsetX; const canvasY = offsetY - y_world * scale; return { x: canvasX, y: canvasY }; }
+        function canvasToWorld(canvasX, canvasY) { const worldX = (canvasX - offsetX) / scale; const worldY = (offsetY - canvasY) / scale; return { x: worldX, y: worldY }; }
+        function drawNetwork() { if (Object.keys(networkData.nodes).length === 0) return; ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.lineWidth = Math.max(0.01, currentLinkWidth / Math.sqrt(scale)); for (const link of networkData.links) { const fromNode = networkData.nodes[link.from]; const toNode = networkData.nodes[link.to]; if (fromNode && toNode) { const p1 = worldToCanvas(fromNode.x, fromNode.y); const p2 = worldToCanvas(toNode.x, toNode.y); let linkColor = LINK_STATE_COLORS.DEFAULT; if (showLinkStates && Object.keys(allLinkEventsByTime).length > 0) { const linkStateInfo = activeLinksLastKnownState[link.id]; if (linkStateInfo) linkColor = LINK_STATE_COLORS[linkStateInfo.state.toUpperCase()] || LINK_STATE_COLORS.UNKNOWN; } ctx.strokeStyle = linkColor; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); } } }
+        function clearTrainColorCache() { assignedTrainColorsCache = {}; randomColorIndex = 0; }
+        function getTrainColor(vehicleId) { if (trainColorMode === "red") return "red"; if (trainColorMode === "blue") return "blue"; if (trainColorMode === "black") return "black"; if (trainColorMode === "gray") return "gray"; if (assignedTrainColorsCache[vehicleId]) return assignedTrainColorsCache[vehicleId]; let color = randomTrainColorsList[randomColorIndex % randomTrainColorsList.length]; randomColorIndex++; assignedTrainColorsCache[vehicleId] = color; return color; }
+        function drawActiveTrains() { if (!showTrainStatesFromCoords || Object.keys(activeTrainsLastKnownState).length === 0) return; ctx.lineWidth = Math.max(0.5, 4 / Math.sqrt(scale)); for (const vehicleId in activeTrainsLastKnownState) { const train = activeTrainsLastKnownState[vehicleId]; if (train.speed >= 0) { const head = worldToCanvas(train.headX, train.headY); const tail = worldToCanvas(train.tailX, train.tailY); ctx.strokeStyle = getTrainColor(train.vehicle); ctx.beginPath(); ctx.moveTo(tail.x, tail.y); ctx.lineTo(head.x, head.y); ctx.stroke(); } } }
+        function drawEventVehicles() { if (!showEventVehicles || Object.keys(activeEventVehiclesCurrentPosition).length === 0) return; const vehicleRadius = Math.max(1, 5 / Math.sqrt(scale)); for (const vehicleId in activeEventVehiclesCurrentPosition) { const posData = activeEventVehiclesCurrentPosition[vehicleId]; if (posData && typeof posData.x === 'number' && typeof posData.y === 'number') { const canvasPos = worldToCanvas(posData.x, posData.y); ctx.fillStyle = posData.color || getTrainColor(vehicleId); ctx.beginPath(); ctx.arc(canvasPos.x, canvasPos.y, vehicleRadius, 0, 2 * Math.PI); ctx.fill(); } } }
+        function applyTrainUpdatesForTime(time) { const eventsAtThisTime = allTrainEventsByTime[time]; if (eventsAtThisTime) for (const vehicleId in eventsAtThisTime) activeTrainsLastKnownState[vehicleId] = eventsAtThisTime[vehicleId]; }
+        function applyLinkUpdatesForTime(time) { const eventsAtThisTime = allLinkEventsByTime[time]; if (eventsAtThisTime) for (const linkId in eventsAtThisTime) activeLinksLastKnownState[linkId] = eventsAtThisTime[linkId]; }
+        function updateEventVehiclePositions(currentTimeForInterpolation) { activeEventVehiclesCurrentPosition = {}; if (Object.keys(allVehicleLinkTravels).length === 0) return; for (const vehicleId in allVehicleLinkTravels) { const travels = allVehicleLinkTravels[vehicleId]; let currentTravelSegment = null; let nextTravelSegment = null; for (let i = 0; i < travels.length; i++) { if (travels[i].type === "entered" && travels[i].time <= currentTimeForInterpolation) { let correspondingLeft = null; for (let j = i + 1; j < travels.length; j++) if (travels[j].type === "left" && travels[j].linkId === travels[i].linkId) { correspondingLeft = travels[j]; break; } if (correspondingLeft && currentTimeForInterpolation <= correspondingLeft.time) { currentTravelSegment = travels[i]; nextTravelSegment = correspondingLeft; break; } else if (!correspondingLeft && currentTimeForInterpolation >= travels[i].time) { currentTravelSegment = travels[i]; nextTravelSegment = null; break;} } } if (currentTravelSegment) { const fromNode = networkData.nodes[currentTravelSegment.fromNodeId]; const toNode = networkData.nodes[currentTravelSegment.toNodeId]; if (!fromNode || !toNode) { console.warn(`Nodes not found for event vehicle ${vehicleId} on ${currentTravelSegment.linkId}`); continue; } let progress = 0; const entryTime = currentTravelSegment.time; const exitTime = nextTravelSegment ? nextTravelSegment.time : Infinity; if (currentTimeForInterpolation >= entryTime && currentTimeForInterpolation <= exitTime && exitTime !== Infinity && entryTime !== exitTime) progress = (currentTimeForInterpolation - entryTime) / (exitTime - entryTime); else if (currentTimeForInterpolation > exitTime && exitTime !== Infinity) progress = 1; else if (currentTimeForInterpolation < entryTime) progress = 0; else if (exitTime === Infinity && currentTimeForInterpolation >= entryTime) progress = 0.05; progress = Math.max(0, Math.min(1, progress)); const currentX = fromNode.x + (toNode.x - fromNode.x) * progress; const currentY = fromNode.y + (toNode.y - fromNode.y) * progress; activeEventVehiclesCurrentPosition[vehicleId] = { x: currentX, y: currentY, onLinkId: currentTravelSegment.linkId, color: getTrainColor(vehicleId) }; } } }
+        function rebuildActiveStatesUpToTime(targetVisualisationTime) { activeTrainsLastKnownState = {}; activeLinksLastKnownState = {}; for (let i = 0; i < sortedTimestamps.length; i++) { const discreteEventTime = sortedTimestamps[i]; if (discreteEventTime <= targetVisualisationTime) { applyTrainUpdatesForTime(discreteEventTime); applyLinkUpdatesForTime(discreteEventTime); } else break; } }
+
+        function drawCurrentFrame() { if (Object.keys(networkData.nodes).length === 0) return; updateEventVehiclePositions(visualisationTime); drawNetwork(); if (Object.keys(allTrainEventsByTime).length > 0) drawActiveTrains(); drawEventVehicles(); let discreteTimeToDisplay = sortedTimestamps[currentTimestampIndex] !== undefined ? sortedTimestamps[currentTimestampIndex] : (sortedTimestamps.length > 0 ? sortedTimestamps[0] : 0); updateTimeDisplays(visualisationTime, discreteTimeToDisplay); }
+        function updateTimeDisplays(currentVisualTime, currentDiscreteEventTimeForSlider) { timeDisplay.textContent = `Time: ${formatTime(currentVisualTime)}`; currentTimeDisplay.textContent = formatTime(currentDiscreteEventTimeForSlider); if (sortedTimestamps.length > 0 && currentTimestampIndex >= 0 && currentTimestampIndex < sortedTimestamps.length) timeSlider.value = currentTimestampIndex; else if (sortedTimestamps.length > 0) timeSlider.value = sortedTimestamps.length -1; else timeSlider.value = 0; }
+        function formatTime(seconds) { if (isNaN(seconds) || seconds === undefined) seconds = 0; const h = Math.floor(seconds / 3600); const m = Math.floor((seconds % 3600) / 60); const s = Math.floor(seconds % 60); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`; }
+        
+        function animate() {
+            if (!isPlaying || sortedTimestamps.length === 0) { stopAnimation(); return; }
+
+            const now = performance.now();
+            const elapsedRealTime = initialStatesAppliedForVisualisationTime ? (now - lastAnimationFrameTime) / 1000 : (16 / 1000) ;
+            lastAnimationFrameTime = now;
+
+            const simulationTimeAdvance = elapsedRealTime * playbackSpeedFactor;
+            visualisationTime += simulationTimeAdvance;
+
+            const maxSimTime = sortedTimestamps.length > 0 ? sortedTimestamps[sortedTimestamps.length - 1] : 0;
+            if (maxSimTime > 0 && visualisationTime > maxSimTime) {
+                visualisationTime = sortedTimestamps[0] || 0;
+                currentTimestampIndex = 0;
+                activeTrainsLastKnownState = {}; activeLinksLastKnownState = {}; activeEventVehiclesCurrentPosition = {};
+                initialStatesAppliedForVisualisationTime = false;
+            }
+
+            let newDiscreteEventIndex = currentTimestampIndex;
+            while(newDiscreteEventIndex < sortedTimestamps.length -1 && sortedTimestamps[newDiscreteEventIndex + 1] <= visualisationTime) {
+                newDiscreteEventIndex++;
+            }
+
+            if (newDiscreteEventIndex !== currentTimestampIndex || !initialStatesAppliedForVisualisationTime) {
+                for (let i = (initialStatesAppliedForVisualisationTime ? currentTimestampIndex + 1 : 0) ; i <= newDiscreteEventIndex; i++) {
+                     if (i < sortedTimestamps.length) {
+                        const discreteEventTime = sortedTimestamps[i];
+                        applyTrainUpdatesForTime(discreteEventTime);
+                        applyLinkUpdatesForTime(discreteEventTime);
+                    }
+                }
+                currentTimestampIndex = newDiscreteEventIndex;
+                initialStatesAppliedForVisualisationTime = true;
+            }
+            
+            drawCurrentFrame();
+            animationFrameId = requestAnimationFrame(animate);
+        }
+
+        playButton.addEventListener('click', () => {
+            if (sortedTimestamps.length === 0) { statusDisplay.textContent = "No event data to play."; return; }
+            isPlaying = true; playButton.disabled = true; stopButton.disabled = false; timeSlider.disabled = true;
+            networkFileInput.disabled = true; trainStatesFileInput.disabled = true; linkStatesFileInput.disabled = true; eventsFileInput.disabled = true;
+            trainColorModeSelect.disabled = true; toggleEventVehiclesButton.disabled = true; toggleLinkStatesButton.disabled = true; toggleTrainStatesCoordsButton.disabled = true;
+            statusDisplay.textContent = "Playing...";
+
+            if (sortedTimestamps.length > 0 && currentTimestampIndex >= 0 && currentTimestampIndex < sortedTimestamps.length) {
+                visualisationTime = sortedTimestamps[currentTimestampIndex];
+            } else {
+                 visualisationTime = sortedTimestamps.length > 0 ? sortedTimestamps[0] : 0;
+                 currentTimestampIndex = 0;
+            }
+            activeTrainsLastKnownState = {}; activeLinksLastKnownState = {}; activeEventVehiclesCurrentPosition = {};
+            rebuildActiveStatesUpToTime(visualisationTime);
+            initialStatesAppliedForVisualisationTime = false;
+            lastAnimationFrameTime = 0;
+            animationFrameId = requestAnimationFrame(animate);
+        });
+        stopButton.addEventListener('click', () => { stopAnimation(); });
+        function stopAnimation() { isPlaying = false; if (animationFrameId) cancelAnimationFrame(animationFrameId); animationFrameId = null; playButton.disabled = (sortedTimestamps.length === 0); stopButton.disabled = true; timeSlider.disabled = (sortedTimestamps.length === 0); networkFileInput.disabled = false; trainStatesFileInput.disabled = false; linkStatesFileInput.disabled = false; eventsFileInput.disabled = false; trainColorModeSelect.disabled = false; toggleEventVehiclesButton.disabled = Object.keys(allVehicleLinkTravels).length === 0; toggleLinkStatesButton.disabled = Object.keys(allLinkEventsByTime).length === 0; toggleTrainStatesCoordsButton.disabled = Object.keys(allTrainEventsByTime).length === 0; statusDisplay.textContent = "Stopped. Ready to play or adjust time."; }
+        toggleEventVehiclesButton.addEventListener('click', () => { showEventVehicles = !showEventVehicles; toggleEventVehiclesButton.textContent = `Event Vehicles: ${showEventVehicles ? 'ON' : 'OFF'}`; toggleEventVehiclesButton.classList.toggle('active', showEventVehicles); if (Object.keys(networkData.nodes).length > 0) drawCurrentFrame(); });
+        toggleLinkStatesButton.addEventListener('click', () => { showLinkStates = !showLinkStates; toggleLinkStatesButton.textContent = `Link States: ${showLinkStates ? 'ON' : 'OFF'}`; toggleLinkStatesButton.classList.toggle('active', showLinkStates); if (Object.keys(networkData.nodes).length > 0) drawCurrentFrame(); });
+        toggleTrainStatesCoordsButton.addEventListener('click', () => { showTrainStatesFromCoords = !showTrainStatesFromCoords; toggleTrainStatesCoordsButton.textContent = `Coords Trains: ${showTrainStatesFromCoords ? 'ON' : 'OFF'}`; toggleTrainStatesCoordsButton.classList.toggle('active', showTrainStatesFromCoords); if (Object.keys(networkData.nodes).length > 0) drawCurrentFrame(); });
+        trainColorModeSelect.addEventListener('change', (event) => { trainColorMode = event.target.value; if (trainColorMode === "random") clearTrainColorCache(); if (Object.keys(networkData.nodes).length > 0) drawCurrentFrame(); });
+        timeSlider.addEventListener('input', () => {
+            if (isPlaying) stopAnimation();
+            currentTimestampIndex = parseInt(timeSlider.value);
+            if (sortedTimestamps.length > 0 && currentTimestampIndex >= 0 && currentTimestampIndex < sortedTimestamps.length) {
+                visualisationTime = sortedTimestamps[currentTimestampIndex];
+                rebuildActiveStatesUpToTime(visualisationTime);
+                drawCurrentFrame();
+            } else if (sortedTimestamps.length === 0 && Object.keys(networkData.nodes).length > 0) {
+                 visualisationTime = 0; updateTimeDisplays(0,0); activeTrainsLastKnownState = {}; activeLinksLastKnownState = {}; activeEventVehiclesCurrentPosition = {}; drawCurrentFrame();
+            } else if (sortedTimestamps.length === 0) { visualisationTime = 0; updateTimeDisplays(0,0); }
+        });
+        function updateTimeSliderMax() { if (sortedTimestamps.length > 0) timeSlider.max = sortedTimestamps.length - 1; else timeSlider.max = 0; }
+        
+        speedSlider.addEventListener('input', () => {
+            const sliderVal = parseInt(speedSlider.value);
+            const sliderMax = parseInt(speedSlider.max);
+            const sliderValFor1x = 50;
+
+            if (sliderVal <= sliderValFor1x) {
+                playbackSpeedFactor = 0.1 + (sliderVal - 1) * ( (MAX_PLAYBACK_SPEED_FACTOR > 1 ? 0.9 : 0) / (sliderValFor1x -1));
+            } else {
+                const rangeAbove1x = MAX_PLAYBACK_SPEED_FACTOR - 1.0;
+                const sliderStepsAbove1x = sliderMax - sliderValFor1x;
+                if (sliderStepsAbove1x > 0) {
+                    playbackSpeedFactor = 1.0 + (sliderVal - sliderValFor1x) * (rangeAbove1x / sliderStepsAbove1x);
+                } else {
+                    playbackSpeedFactor = 1.0;
+                }
+            }
+            playbackSpeedFactor = Math.max(0.1, Math.min(playbackSpeedFactor, MAX_PLAYBACK_SPEED_FACTOR));
+            currentSpeedDisplay.textContent = `${playbackSpeedFactor.toFixed(1)}x`;
+        });
+        (() => { // Initialize speed display
+            const sliderVal = parseInt(speedSlider.value);
+            const sliderMax = parseInt(speedSlider.max);
+            const sliderValFor1x = 50;
+            if (sliderVal <= sliderValFor1x) {
+                playbackSpeedFactor = 0.1 + (sliderVal - 1) * ( (MAX_PLAYBACK_SPEED_FACTOR > 1 ? 0.9 : 0) / (sliderValFor1x -1));
+            } else {
+                const rangeAbove1x = MAX_PLAYBACK_SPEED_FACTOR - 1.0;
+                const sliderStepsAbove1x = sliderMax - sliderValFor1x;
+                 if (sliderStepsAbove1x > 0) {
+                    playbackSpeedFactor = 1.0 + (sliderVal - sliderValFor1x) * (rangeAbove1x / sliderStepsAbove1x);
+                } else {
+                    playbackSpeedFactor = 1.0;
+                }
+            }
+            playbackSpeedFactor = Math.max(0.1, Math.min(playbackSpeedFactor, MAX_PLAYBACK_SPEED_FACTOR));
+            currentSpeedDisplay.textContent = `${playbackSpeedFactor.toFixed(1)}x`;
+        })();
+
+        linkWidthSlider.addEventListener('input', () => { currentLinkWidth = parseFloat(linkWidthSlider.value); currentLinkWidthDisplay.textContent = `${currentLinkWidth.toFixed(1)}px`; if (Object.keys(networkData.nodes).length > 0) drawCurrentFrame(); });
+        (() => { currentLinkWidth = parseFloat(linkWidthSlider.value); currentLinkWidthDisplay.textContent = `${currentLinkWidth.toFixed(1)}px`; })();
+        canvas.addEventListener('wheel', (event) => { event.preventDefault(); const ZI = 0.1; const dir = event.deltaY < 0 ? 1 : -1; const rect = canvas.getBoundingClientRect(); const mcX = event.clientX - rect.left; const mcY = event.clientY - rect.top; const wM_bZ = canvasToWorld(mcX, mcY); let nS = scale * (1 + dir * ZI); nS = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nS)); scale = nS; offsetX = mcX - wM_bZ.x * scale; offsetY = mcY + wM_bZ.y * scale; drawCurrentFrame(); });
+        canvas.addEventListener('mousedown', (event) => { if (event.button === 0) { isPanning = true; lastPanX = event.clientX; lastPanY = event.clientY; canvas.style.cursor = 'grabbing';}});
+        canvas.addEventListener('mousemove', (event) => { if (isPanning) { const dx = event.clientX - lastPanX; const dy = event.clientY - lastPanY; offsetX += dx; offsetY += dy; lastPanX = event.clientX; lastPanY = event.clientY; drawCurrentFrame(); }});
+        canvas.addEventListener('mouseup', () => { if (isPanning) { isPanning = false; canvas.style.cursor = 'grab'; }});
+        canvas.addEventListener('mouseleave', () => { if (isPanning) { isPanning = false; canvas.style.cursor = 'grab'; }});
+        resetViewButton.addEventListener('click', resetView);
+        function resetView() { calculateInitialTransform(); if (sortedTimestamps.length > 0 && currentTimestampIndex >= 0 && currentTimestampIndex < sortedTimestamps.length) { visualisationTime = sortedTimestamps[currentTimestampIndex]; rebuildActiveStatesUpToTime(visualisationTime); } else { visualisationTime = 0; activeTrainsLastKnownState = {}; activeLinksLastKnownState = {}; activeEventVehiclesCurrentPosition = {}; } drawCurrentFrame(); }
+        window.addEventListener('resize', () => { resetView(); });
+        calculateInitialTransform(); drawNetwork(); updateTimeDisplays(0,0); trainColorModeSelect.value = trainColorMode; statusDisplay.textContent = "Load network file to begin."; toggleEventVehiclesButton.disabled = true; toggleLinkStatesButton.disabled = true; toggleTrainStatesCoordsButton.disabled = true;
+    </script>
+</body>
+</html>
