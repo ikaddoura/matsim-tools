@@ -1,0 +1,2223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MATSim Network and Transit Schedule Editor</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f4f4f4;
+        }
+
+        .app-header {
+            background-color: #003366;
+            color: white;
+            padding: 8px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 2px solid #005cbf;
+            flex-shrink: 0; /* Prevent shrinking */
+        }
+
+        .app-header h1 {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: normal;
+        }
+
+        .controls { /* Status bar - moved to bottom */
+            padding: 2px 10px;
+            background-color: #e9ecef;
+            border-top: 1px solid #ced4da; /* Changed from border-bottom */
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 15px;
+            height: 20px; /* Made smaller */
+            flex-shrink: 0; /* Prevent shrinking */
+        }
+        .controls .status {
+            font-size: 0.75em; /* Made smaller */
+            color: #333;
+        }
+
+        .editor-area {
+            flex-grow: 1;
+            position: relative;
+            overflow: hidden;
+            background-color: #ffffff;
+        }
+        #networkCanvas { display: block; cursor: crosshair; position: absolute; top: 0; left: 0; width:100%; height:100%; z-index: 1; }
+        #leafletMapContainer { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 0;}
+        .hidden { display: none !important; }
+
+        .floating-panel {
+            background-color: rgba(255, 255, 255, 0.92);
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 1px 1px 8px rgba(0,0,0,0.15);
+            font-size: 0.9em;
+            width: 220px;
+            box-sizing: border-box;
+        }
+        .floating-panel h4 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1em;
+            color: #333;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .floating-panel button,
+        .floating-panel select,
+        .floating-panel input[type="file"],
+        .floating-panel input[type="text"],
+        .floating-panel input[type="range"] {
+            display: block;
+            width: 100%;
+            margin-bottom: 6px;
+            padding: 6px 8px;
+            border: 1px solid #ced4da;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.85em;
+            box-sizing: border-box;
+        }
+        .floating-panel input[type="text"], 
+        .floating-panel input[type="file"], 
+        .floating-panel input[type="range"],
+        .floating-panel select {
+             background-color: white;
+        }
+         .floating-panel input[type="range"] {
+            padding: 0; /* Ranges look better without padding */
+         }
+        .floating-panel button.active { background-color: #007bff; color: white; border-color: #007bff; }
+        .floating-panel button:hover:not(.active):not(.danger):not(.confirm) { background-color: #f0f0f0; }
+        .floating-panel button.danger { background-color: #dc3545; color: white; border-color: #dc3545; }
+        .floating-panel button.danger:hover { background-color: #c82333; border-color: #bd2130;}
+        .floating-panel button.confirm { background-color: #28a745; color: white; border-color: #28a745; }
+        .floating-panel button.confirm:hover { background-color: #218838; border-color: #1e7e34; }
+
+        .floating-panel label {
+            display: block;
+            margin-bottom: 3px;
+            font-size: 0.85em;
+            color: #555;
+        }
+         .floating-panel input[type="checkbox"] + label {
+            display: inline-block;
+            margin-left: 5px;
+            margin-bottom: 0;
+            vertical-align: middle;
+        }
+        .floating-panel input[type="checkbox"] {
+            vertical-align: middle;
+        }
+        .floating-panel .inline-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            width: 100%;
+            margin-bottom: 6px;
+        }
+        .floating-panel .inline-group label {
+            margin-bottom: 0;
+            flex-shrink: 0;
+        }
+        .floating-panel .inline-group input,
+        .floating-panel .inline-group select {
+            flex-grow: 1;
+            width: auto;
+            margin-bottom: 0;
+        }
+
+        .left-panels-container {
+            position: absolute;
+            left: 10px;
+            top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 900;
+            max-height: calc(100% - 20px); /* Relative to editor-area height */
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .right-panels-container {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 900;
+            max-height: calc(100% - 20px); /* Relative to editor-area height */
+            overflow-y: auto;
+            padding-left: 5px; /* Space for scrollbar if it appears on the left of panels */
+        }
+        
+        #file-panel { /* Now in right-panels-container */
+            width: 250px;
+        }
+        #file-panel #imageUploadContainer label {
+            display: inline-block; margin-right: 5px;
+        }
+         #file-panel #imageUploadContainer input[type="file"] {
+            display: inline-block; width: auto;
+        }
+
+        .attribute-panel {
+            position: absolute;
+            top: 10px;
+            /* Positioned to the left of the right-panels-container */
+            right: calc(10px + 250px + 10px); /* 10px margin + file-panel-width (widest in right container) + 10px spacing */
+            background-color: white;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            width: 320px;
+            max-height: calc(100% - 20px); /* Relative to editor-area height */
+            overflow-y: auto;
+        }
+
+        .attribute-panel h4 { margin-top: 0; margin-bottom: 10px; font-size: 1.1em; color: #333; }
+        .attribute-panel .attr-row { margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .attribute-panel label { margin-right: 10px; font-size: 0.9em; flex-basis: 100px; flex-shrink: 0; color: #555; }
+        .attribute-panel input[type="text"],
+        .attribute-panel input[type="number"],
+        .attribute-panel select { flex-grow: 1; padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 0.9em;}
+        .attribute-panel button { margin-top: 10px; margin-right: 5px; display: inline-block; width: auto;}
+        .attribute-panel table { width: 100%; margin-top: 10px; border-collapse: collapse; }
+        .attribute-panel th, .attribute-panel td { border: 1px solid #ddd; padding: 4px; text-align: left; font-size: 0.85em; }
+        .attribute-panel th { background-color: #f8f9fa; }
+        .attribute-panel td input[type="text"], .attribute-panel td input[type="checkbox"] { width: 90%; padding: 2px; box-sizing: border-box;}
+
+        #overlapChoiceDialog {
+            position: absolute;
+            background-color: #fff;
+            border: 1px solid #999;
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 3px 3px 10px rgba(0,0,0,0.2);
+            z-index: 2000;
+            font-size: 0.9em;
+        }
+        #overlapChoiceDialog p { margin-top: 0; margin-bottom: 10px; }
+        #overlapChoiceDialog button { display: block; width: 100%; margin-bottom: 5px; padding: 5px; background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; text-align: left; }
+        #overlapChoiceDialog button:hover { background-color: #e0e0e0; }
+        #overlapChoiceDialog button.cancel-overlap { background-color: #f8d7da; margin-top:10px;}
+
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <h1>MATSim Network and Transit Schedule Editor</h1>
+    </div>
+
+    <div class="editor-area">
+        <div id="leafletMapContainer"></div>
+        <canvas id="networkCanvas"></canvas>
+
+        <div class="left-panels-container">
+            <div class="layer-panel floating-panel">
+                <h4>Layers</h4>
+                <div><input type="checkbox" id="toggleNodesLayer" checked> <label for="toggleNodesLayer">Nodes</label></div>
+                <div><input type="checkbox" id="toggleLinksLayer" checked> <label for="toggleLinksLayer">Links</label></div>
+                <div><input type="checkbox" id="toggleTransitStopsLayer" checked> <label for="toggleTransitStopsLayer">Transit Stops</label></div>
+                <div><input type="checkbox" id="toggleTransitLinesLayer" checked> <label for="toggleTransitLinesLayer">Transit Lines</label></div>
+            </div>
+
+            <div id="offset-panel" class="floating-panel"> 
+                <h4>Display Options</h4>
+                <label for="linkOffsetSlider">Link Offset (px):</label>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <input type="range" id="linkOffsetSlider" min="-20" max="20" value="0" step="1" style="flex-grow: 1; margin-bottom: 0;">
+                    <span id="linkOffsetValue" style="width: 30px; text-align: right;">0</span>
+                </div>
+                <button id="resetLinkOffsetBtn" style="font-size:0.8em; padding: 3px 6px; width: auto; margin-top: 5px;">Reset Offset</button>
+            </div>
+
+            <div id="tools-panel" class="floating-panel">
+                <h4>Tools</h4>
+                <button id="selectModeBtn">Select</button>
+                <button id="addNodeModeBtn">Add Nodes</button>
+                <button id="addLinkModeBtn">Add Links</button>
+                <button id="addTransitStopModeBtn">Add Transit Stop</button>
+                <button id="addTransitLineModeBtn">Add Transit Line</button>
+                <button id="finalizeTransitLineBtn" class="hidden confirm">Finalize Line</button>
+                <button id="cancelTransitLineBtn" class="hidden danger">Cancel Line</button>
+                <hr style="margin: 8px 0;">
+                <button id="deleteSelectedBtn" class="danger">Delete selected</button>
+                <button id="deleteAllNodesBtn" class="danger" title="Delete All Nodes, Links & Transit">Delete all</button>
+                <button id="deleteAllLinksBtn" class="danger">Delete all Links</button>
+            </div>
+        </div>
+
+        <div class="right-panels-container">
+            <div id="file-panel" class="floating-panel">
+                <h4>Load Network or Background</h4>
+                <label for="bgModeSelect">Background:</label>
+                <select id="bgModeSelect">
+                    <option value="none">None (Blank Canvas)</option>
+                    <option value="image">Uploaded Image</option>
+                    <option value="osm" selected>OpenStreetMap</option>
+                </select>
+                <div id="imageUploadContainer" class="hidden">
+                    <label for="bgImageUpload" style="display: block; margin-bottom: 3px;">BG Image:</label>
+                    <input type="file" id="bgImageUpload" accept="image/*">
+                </div>
+                <hr style="margin: 8px 0;">
+                <label for="uploadNetworkXml">Load Network XML/GZ:</label>
+                <input type="file" id="uploadNetworkXml" accept=".xml,application/xml,.gz,application/gzip,application/x-gzip">
+                <div class="inline-group">
+                    <label for="uploadedFileCrsSelect">File CRS:</label> 
+                    <select id="uploadedFileCrsSelect">
+                        <option value="EPSG:4326">WGS84 (EPSG:4326)</option>
+                        <option value="EPSG:2056">Swiss LV95 (EPSG:2056)</option>
+                        <option value="CARTESIAN">Mathematical / Cartesian (X,Y)</option>
+                        <option value="PROJ_PIXELS">Projected Pixels (Leaflet)</option>
+                    </select>
+                </div>
+                <button id="loadNetworkBtn">Load Network</button>
+                <hr style="margin: 8px 0;">
+                <label for="uploadScheduleXml">Load Schedule XML/GZ:</label>
+                <input type="file" id="uploadScheduleXml" accept=".xml,application/xml,.gz,application/gzip,application/x-gzip">
+                 <div class="inline-group">
+                    <label for="scheduleFileCrsSelect">Stop CRS:</label> 
+                    <select id="scheduleFileCrsSelect">
+                        <option value="EPSG:4326">WGS84 (EPSG:4326)</option>
+                        <option value="EPSG:2056">Swiss LV95 (EPSG:2056)</option>
+                        <option value="CARTESIAN">Mathematical / Cartesian (X,Y)</option>
+                         <option value="PROJ_PIXELS">Projected Pixels (Leaflet)</option>
+                    </select>
+                </div>
+                <button id="loadScheduleBtn">Load Schedule</button>
+            </div>
+
+            <div id="export-panel" class="floating-panel">
+                <h4>Export</h4>
+                <label for="outputCrsSelect">Export CRS (optional):</label>
+                <select id="outputCrsSelect">
+                    <option value="" selected>-- Auto (Current System) --</option> 
+                    <option value="wgs84" disabled>WGS84 (EPSG:4326)</option>
+                    <option value="epsg2056" disabled>Swiss LV95 (EPSG:2056)</option>
+                    <option value="cartesian_canvas">Cartesian (Canvas/Image Units)</option> 
+                </select>
+                <button id="downloadXmlBtn">network.xml</button>
+                <button id="downloadScheduleXmlBtn">transitSchedule.xml</button>
+                <button id="downloadVehiclesXmlBtn">transitVehicles.xml</button>
+            </div>
+        </div>
+
+
+        <div id="overlapChoiceDialog" class="hidden">
+            <p>Multiple elements found. Please choose:</p>
+            <div id="overlapOptionsContainer"></div>
+            <button class="cancel-overlap" id="cancelOverlapChoice">Cancel Selection</button>
+        </div>
+
+        <div id="linkAttributeEditor" class="hidden attribute-panel">
+            <h4>Edit Link Attributes</h4>
+            <div class="attr-row"> <label for="linkAttrId">ID:</label> <input type="text" id="linkAttrId" readonly> </div>
+            <div class="attr-row"> <label for="linkAttrLength">Length (override):</label> <input type="number" id="linkAttrLength" step="0.1" placeholder="Calculated if empty"> </div>
+            <div class="attr-row"> <label for="linkAttrFreespeed">Freespeed:</label> <input type="number" id="linkAttrFreespeed" step="0.1"> </div>
+            <div class="attr-row"> <label for="linkAttrCapacity">Capacity:</label> <input type="number" id="linkAttrCapacity" step="100"> </div>
+            <div class="attr-row"> <label for="linkAttrPermlanes">Permlanes:</label> <input type="number" id="linkAttrPermlanes" step="0.1"> </div>
+            <div class="attr-row"> <label for="linkAttrModes">Modes (csv):</label> <input type="text" id="linkAttrModes"> </div>
+            <button id="applyLinkChangesBtn">Apply</button>
+            <button id="closeLinkEditorBtn">Close</button>
+        </div>
+
+        <div id="transitStopAttributeEditor" class="hidden attribute-panel">
+            <h4>Edit Transit Stop Attributes</h4>
+            <div class="attr-row"> <label for="tsAttrId">ID:</label> <input type="text" id="tsAttrId" readonly> </div>
+            <div class="attr-row"> <label for="tsAttrName">Name:</label> <input type="text" id="tsAttrName" placeholder="e.g., Main Station P1"> </div>
+            <div class="attr-row"> <label for="tsAttrNodeId">Node ID:</label> <input type="text" id="tsAttrNodeId" readonly> </div>
+            <div class="attr-row" id="tsAttrLinkRefIdTextInputContainer"> <label for="tsAttrLinkRefId">Link Ref ID:</label> <input type="text" id="tsAttrLinkRefId" placeholder="Manual or pick"> </div>
+            <div class="attr-row" id="tsAttrLinkRefIdSelectContainer" class="hidden">
+                 <label for="tsAttrLinkRefIdSelect">Pick Link Ref:</label>
+                 <select id="tsAttrLinkRefIdSelect"></select>
+            </div>
+            <div class="attr-row"> <label for="tsAttrStopAreaId">Stop Area ID:</label> <input type="text" id="tsAttrStopAreaId" placeholder="e.g., Main Station"> </div>
+            <button id="applyTsChangesBtn">Apply</button>
+            <button id="closeTsEditorBtn">Close</button>
+        </div>
+
+        <div id="transitRouteAttributeEditor" class="hidden attribute-panel">
+            <h4>Edit Transit Route Attributes</h4>
+            <div class="attr-row"> <label for="trAttrId">Route ID:</label> <input type="text" id="trAttrId" readonly> </div>
+            <div class="attr-row"> <label for="trAttrLineId">Line ID:</label> <input type="text" id="trAttrLineId"> </div>
+            <div class="attr-row"> <label for="trAttrName">Route Name:</label> <input type="text" id="trAttrName" placeholder="e.g., Downtown Exp."> </div>
+            <div class="attr-row"> <label for="trAttrTransportMode">Mode:</label>
+                <select id="trAttrTransportMode">
+                    <option value="rail">rail</option> <option value="bus">bus</option> <option value="pt">pt</option>
+                </select>
+            </div>
+            <div><strong>Stops in Profile:</strong> <span id="trAttrStopsList">(auto)</span></div>
+            <div><strong>Links in Route:</strong> <span id="trAttrLinksList" title="Full list shown on hover">(manual/calculated)</span></div>
+            <button id="recalculateRouteLinksBtn" style="font-size: 0.8em; padding: 4px 8px;">Recalculate Route (Shortest Path)</button>
+            <hr>
+            <div>
+                <h5>Departures (<button id="trAddDepartureBtn" title="Add new departure" style="padding: 2px 5px; font-size: 0.8em;">+</button>)</h5>
+                <table id="trDeparturesTable">
+                    <thead><tr><th>ID</th><th>Time</th><th>Vehicle Ref</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+             <div class="attr-row"> <label for="trDefaultVehicleType">New Dep. Vehicle:</label>
+                <select id="trDefaultVehicleType"></select>
+            </div>
+            <hr>
+            <div>
+                <h5>Route Profile (Stops Details)</h5>
+                <table id="trStopProfileTable">
+                    <thead><tr><th>Stop ID</th><th>Arrival</th><th>Departure</th><th>Await</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <button id="applyTrChangesBtn">Apply</button>
+            <button id="closeTrEditorBtn">Close</button>
+            <button id="deleteSelectedRouteBtn" class="danger">Delete Route</button>
+        </div>
+    </div>
+
+    <div class="controls">
+        <span class="status" id="currentModeStatus">Mode: Add Nodes</span>
+        <span class="status" id="coordsStatus">Mouse: (0,0)|Map: (0,0)</span>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const canvas = document.getElementById('networkCanvas');
+        const ctx = canvas.getContext('2d');
+        const bgImageUpload = document.getElementById('bgImageUpload');
+        const imageUploadContainer = document.getElementById('imageUploadContainer');
+        const addNodeModeBtn = document.getElementById('addNodeModeBtn');
+        const addLinkModeBtn = document.getElementById('addLinkModeBtn');
+        const selectModeBtn = document.getElementById('selectModeBtn');
+        const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+        const deleteAllNodesBtn = document.getElementById('deleteAllNodesBtn');
+        const deleteAllLinksBtn = document.getElementById('deleteAllLinksBtn');
+        const outputCrsSelect = document.getElementById('outputCrsSelect');
+        const downloadXmlBtn = document.getElementById('downloadXmlBtn');
+        const currentModeStatus = document.getElementById('currentModeStatus');
+        const coordsStatus = document.getElementById('coordsStatus');
+        const bgModeSelect = document.getElementById('bgModeSelect');
+        const leafletMapContainer = document.getElementById('leafletMapContainer');
+        const editorArea = document.querySelector('.editor-area');
+        const uploadNetworkXmlInput = document.getElementById('uploadNetworkXml');
+        const uploadedFileCrsSelect = document.getElementById('uploadedFileCrsSelect'); 
+        const scheduleFileCrsSelect = document.getElementById('scheduleFileCrsSelect'); 
+        const loadNetworkBtn = document.getElementById('loadNetworkBtn');
+        const uploadScheduleXmlInput = document.getElementById('uploadScheduleXml'); 
+        const loadScheduleBtn = document.getElementById('loadScheduleBtn'); 
+        const linkAttributeEditorPanel = document.getElementById('linkAttributeEditor');
+        const linkAttrIdInput = document.getElementById('linkAttrId');
+        const linkAttrLengthInput = document.getElementById('linkAttrLength');
+        const linkAttrFreespeedInput = document.getElementById('linkAttrFreespeed');
+        const linkAttrCapacityInput = document.getElementById('linkAttrCapacity');
+        const linkAttrPermlanesInput = document.getElementById('linkAttrPermlanes');
+        const linkAttrModesInput = document.getElementById('linkAttrModes');
+        const applyLinkChangesBtn = document.getElementById('applyLinkChangesBtn');
+        const closeLinkEditorBtn = document.getElementById('closeLinkEditorBtn');
+
+        const addTransitStopModeBtn = document.getElementById('addTransitStopModeBtn');
+        const addTransitLineModeBtn = document.getElementById('addTransitLineModeBtn');
+        const finalizeTransitLineBtn = document.getElementById('finalizeTransitLineBtn');
+        const cancelTransitLineBtn = document.getElementById('cancelTransitLineBtn');
+        const downloadScheduleXmlBtn = document.getElementById('downloadScheduleXmlBtn');
+        const downloadVehiclesXmlBtn = document.getElementById('downloadVehiclesXmlBtn');
+
+        const transitStopAttributeEditorPanel = document.getElementById('transitStopAttributeEditor');
+        const tsAttrIdInput = document.getElementById('tsAttrId');
+        const tsAttrNameInput = document.getElementById('tsAttrName');
+        const tsAttrNodeIdInput = document.getElementById('tsAttrNodeId');
+        const tsAttrLinkRefIdInput = document.getElementById('tsAttrLinkRefId');
+        const tsAttrLinkRefIdSelectContainer = document.getElementById('tsAttrLinkRefIdSelectContainer');
+        const tsAttrLinkRefIdSelect = document.getElementById('tsAttrLinkRefIdSelect');
+        const tsAttrLinkRefIdTextInputContainer = document.getElementById('tsAttrLinkRefIdTextInputContainer');
+        const tsAttrStopAreaIdInput = document.getElementById('tsAttrStopAreaId');
+        const applyTsChangesBtn = document.getElementById('applyTsChangesBtn');
+        const closeTsEditorBtn = document.getElementById('closeTsEditorBtn');
+
+        const transitRouteAttributeEditorPanel = document.getElementById('transitRouteAttributeEditor');
+        const trAttrIdInput = document.getElementById('trAttrId');
+        const trAttrLineIdInput = document.getElementById('trAttrLineId');
+        const trAttrNameInput = document.getElementById('trAttrName');
+        const trAttrTransportModeSelect = document.getElementById('trAttrTransportMode');
+        const trAttrStopsListSpan = document.getElementById('trAttrStopsList');
+        const trAttrLinksListSpan = document.getElementById('trAttrLinksList');
+        const recalculateRouteLinksBtn = document.getElementById('recalculateRouteLinksBtn');
+        const trAddDepartureBtn = document.getElementById('trAddDepartureBtn');
+        const trDeparturesTableBody = document.getElementById('trDeparturesTable').querySelector('tbody');
+        const trDefaultVehicleTypeSelect = document.getElementById('trDefaultVehicleType');
+        const trStopProfileTableBody = document.getElementById('trStopProfileTable').querySelector('tbody');
+        const applyTrChangesBtn = document.getElementById('applyTrChangesBtn');
+        const closeTrEditorBtn = document.getElementById('closeTrEditorBtn');
+        const deleteSelectedRouteBtn = document.getElementById('deleteSelectedRouteBtn');
+        const overlapChoiceDialog = document.getElementById('overlapChoiceDialog');
+        const overlapOptionsContainer = document.getElementById('overlapOptionsContainer');
+        const cancelOverlapChoiceBtn = document.getElementById('cancelOverlapChoice');
+
+        const toggleNodesLayerCheckbox = document.getElementById('toggleNodesLayer');
+        const toggleLinksLayerCheckbox = document.getElementById('toggleLinksLayer');
+        const toggleTransitStopsLayerCheckbox = document.getElementById('toggleTransitStopsLayer');
+        const toggleTransitLinesLayerCheckbox = document.getElementById('toggleTransitLinesLayer');
+
+        const linkOffsetSlider = document.getElementById('linkOffsetSlider'); 
+        const linkOffsetValueDisplay = document.getElementById('linkOffsetValue'); 
+        const resetLinkOffsetBtn = document.getElementById('resetLinkOffsetBtn'); 
+
+
+        // --- Proj4js Definitions ---
+        if (typeof proj4 === 'undefined') { console.error("CRITICAL: Proj4js library not loaded!"); }
+        else {
+            console.log("Proj4js loaded.");
+            proj4.defs("EPSG:4326", "+proj=longlat +datum=WGS84 +no_defs");
+            proj4.defs("EPSG:2056", "+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs");
+        }
+
+        // --- Global State ---
+        let backgroundImage = null, nodes = [], links = [], nextNodeId = 1, currentDrawMode = 'addNodes';
+        let firstNodeForLink = null, selectedElement = null, multipleSelectedElements = [];
+        let isMarqueeSelecting = false, marqueeStart = { x: 0, y: 0 }, marqueeEnd = { x: 0, y: 0 };
+        let currentBackgroundMode = 'osm', leafletMap = null, osmTileLayer = null;
+        let osmNodeLayerGroup = null, osmLinkLayerGroup = null;
+        let viewScale = 1.0, panX = 0, panY = 0, isPanning = false, lastPanX, lastPanY;
+        const MIN_VIEW_SCALE = 0.1, MAX_VIEW_SCALE = 10.0;
+        const NODE_RADIUS_SCREEN = 7, NODE_CLICK_RADIUS_SCREEN = 10;
+        const LINK_CLICK_TOLERANCE = 5, TRANSIT_ROUTE_CLICK_TOLERANCE = 6;
+
+        let transitStops = [], transitLines = [], transitRoutes = [];
+        let nextTransitStopId = 1, nextTransitLineId = 1, nextTransitRouteId = 1, nextDepartureId = 1;
+        let currentManualRouteSequence = [];
+        let osmTransitStopLayerGroup = null, osmTransitRouteLayerGroup = null;
+
+        let showNodes = true;
+        let showLinks = true;
+        let showTransitStops = true;
+        let showTransitLines = true;
+
+        let linkGlobalOffset = 0; 
+        let loadedNetworkCRS = null;
+
+
+        const TRANSIT_STOP_RADIUS_SCREEN = 6;
+        const TRANSIT_STOP_CLICK_RADIUS_SCREEN = 8;
+
+        const defaultVehicleTypes = [
+            {
+                id: "bus_default",
+                attributes: { railsimAcceleration: 0.5, railsimMaxDeceleration: 0.5 },
+                capacity: { seats: "9999", standingRoomInPersons: "9999" },
+                length: "750.0",
+                width: "1.0",
+                maximumVelocity: "27.7778",
+                networkMode: "rail", // As per user example
+                passengerCarEquivalents: "1.0",
+                flowEfficiencyFactor: "1.0",
+                costInformation: {} // Flag to include the empty tag
+            },
+            {
+                id: "rail_default",
+                attributes: { railsimAcceleration: 0.5, railsimMaxDeceleration: 0.5 },
+                capacity: { seats: "9999", standingRoomInPersons: "9999" },
+                length: "750.0",
+                width: "1.0",
+                maximumVelocity: "27.7778",
+                networkMode: "rail",
+                passengerCarEquivalents: "1.0",
+                flowEfficiencyFactor: "1.0",
+                costInformation: {}
+            },
+            { 
+                id: "pt_generic_default", // To maintain consistency if this type is used
+                attributes: { railsimAcceleration: 0.5, railsimMaxDeceleration: 0.5 }, 
+                capacity: { seats: "9999", standingRoomInPersons: "9999" }, 
+                length: "750.0", 
+                width: "1.0",
+                maximumVelocity: "27.7778",
+                networkMode: "pt", // Retaining its original mode here
+                passengerCarEquivalents: "1.0",
+                flowEfficiencyFactor: "1.0",
+                costInformation: {}
+            }
+        ];
+        let definedVehicles = [], vehicleIdCounter = 1;
+
+
+        // --- Utility Functions ---
+        function getNumericIdPart(idStr) {
+            if (!idStr) return 0;
+            const match = idStr.match(/\d+$/); 
+            if (match) return parseInt(match[0]);
+            const numericPart = parseInt(idStr.replace(/\D/g, '')); 
+            return isNaN(numericPart) ? 0 : numericPart;
+        }
+        function updateExportCrsOptions() { 
+            const allNodesAreOSM = nodes.length > 0 && nodes.every(node => node.isOSM && node.latlng); 
+            const proj4Loaded = typeof proj4 !== 'undefined'; 
+            const wgs84Option = outputCrsSelect.querySelector('option[value="wgs84"]'); 
+            const epsg2056Option = outputCrsSelect.querySelector('option[value="epsg2056"]');
+            const cartesianCanvasOption = outputCrsSelect.querySelector('option[value="cartesian_canvas"]');
+
+            if (wgs84Option) wgs84Option.disabled = !(allNodesAreOSM && proj4Loaded); 
+            if (epsg2056Option) epsg2056Option.disabled = !(allNodesAreOSM && proj4Loaded); 
+            
+            if (cartesianCanvasOption) {
+                cartesianCanvasOption.disabled = !(currentBackgroundMode === 'none' || currentBackgroundMode === 'image' || (loadedNetworkCRS === 'CARTESIAN' && currentBackgroundMode === 'none'));
+            }
+            
+            // Ensure the default "-- Auto --" option is selected if the currently selected one becomes disabled.
+            if (outputCrsSelect.value !== "" && outputCrsSelect.options[outputCrsSelect.selectedIndex].disabled) {
+                 outputCrsSelect.value = "";
+            }
+        }
+        function resizeEditorElements() { const EAreaWidth = editorArea.offsetWidth; const EAreaHeight = editorArea.offsetHeight; if (currentBackgroundMode === 'osm' && leafletMap) { leafletMapContainer.style.width = EAreaWidth + 'px'; leafletMapContainer.style.height = EAreaHeight + 'px'; leafletMap.invalidateSize(); if(linkGlobalOffset !== 0) updateAllOsmLinkOffsets(); } else { canvas.width = EAreaWidth; canvas.height = EAreaHeight; redrawCanvasElements(); } }
+        function disableBackgroundSwitching() { if (!bgModeSelect.disabled && (nodes.length > 0 || links.length > 0 || transitStops.length > 0)) { bgModeSelect.disabled = true; console.log("BG switching disabled."); } }
+        function enableBackgroundSwitching() { bgModeSelect.disabled = false; console.log("BG switching enabled."); }
+        function getIncidentLinks(nodeId) { return links.filter(link => link.from === nodeId || link.to === nodeId); }
+        function findShortestPath(startNodeId, endNodeId, allNodes, allLinks) { const distances = {}; const prevLinks = {}; const pq = new PriorityQueue(); const visited = new Set(); allNodes.forEach(node => { distances[node.id] = Infinity; prevLinks[node.id] = null; }); distances[startNodeId] = 0; pq.enqueue(startNodeId, 0); while (!pq.isEmpty()) { const { element: uNodeId, priority: uDist } = pq.dequeue(); if (uNodeId === endNodeId) break; if (visited.has(uNodeId)) continue; visited.add(uNodeId); const uNode = allNodes.find(n => n.id === uNodeId); if (!uNode) continue; const outgoingLinks = allLinks.filter(link => link.from === uNodeId); for (const link of outgoingLinks) { const vNodeId = link.to; const vNode = allNodes.find(n => n.id === vNodeId); if (!vNode) continue; let weight = 1; if (link.length_override !== undefined && !isNaN(parseFloat(link.length_override))) { weight = parseFloat(link.length_override); } else { const calculatedLen = calculateLinkLength(link, allNodes); if (calculatedLen > 0) weight = calculatedLen; } if (weight <= 0) weight = 0.001; const alt = uDist + weight; if (alt < distances[vNodeId]) { distances[vNodeId] = alt; prevLinks[vNodeId] = {linkId: link.id, prevNodeId: uNodeId}; pq.enqueue(vNodeId, alt); } } } const pathLinkIds = []; let current = endNodeId; while (prevLinks[current] && current !== startNodeId) { pathLinkIds.unshift(prevLinks[current].linkId); current = prevLinks[current].prevNodeId; } if (pathLinkIds.length === 0 && startNodeId !== endNodeId && distances[endNodeId] === Infinity) { return null; } return pathLinkIds; }
+        class PriorityQueue { constructor() { this.items = []; } enqueue(element, priority) { const qe = { element, priority }; let added = false; for (let i = 0; i < this.items.length; i++) { if (this.items[i].priority > qe.priority) { this.items.splice(i, 0, qe); added = true; break; } } if (!added) this.items.push(qe); } dequeue() { if (this.isEmpty()) return null; return this.items.shift(); } isEmpty() { return this.items.length === 0; } }
+        function calculateLinkLength(link, allNodes) { const fromN = allNodes.find(n => n.id === link.from); const toN = allNodes.find(n => n.id === link.to); if (!fromN || !toN) return 0; if (fromN.isOSM && toN.isOSM && fromN.latlng && toN.latlng) { return fromN.latlng.distanceTo(toN.latlng); } else if (!fromN.isOSM && !toN.isOSM && typeof fromN.x === 'number' && typeof fromN.y === 'number' && typeof toN.x === 'number' && typeof toN.y === 'number') { return Math.sqrt(Math.pow(toN.x - fromN.x, 2) + Math.pow(toN.y - fromN.y, 2)); } return 0; }
+
+        // --- Event Listeners ---
+        window.addEventListener('resize', resizeEditorElements);
+        bgModeSelect.addEventListener('change', (event) => { 
+            if (nodes.length > 0 || links.length > 0 || transitStops.length > 0) { 
+                if (!confirm("Changing background mode clears all existing data. Are you sure?")) { 
+                    event.target.value = currentBackgroundMode; 
+                    return; 
+                } 
+            } 
+            switchBackgroundMode(event.target.value); 
+        });
+        bgImageUpload.addEventListener('change', (event) => { const file = event.target.files[0]; if (file && currentBackgroundMode === 'image') { const reader = new FileReader(); reader.onload = (e) => { backgroundImage = new Image(); backgroundImage.onload = () => { panX=0; panY=0; viewScale=1.0; resizeEditorElements(); }; backgroundImage.src = e.target.result; }; reader.readAsDataURL(file); } });
+        addNodeModeBtn.addEventListener('click', () => { setDrawMode('addNodes'); });
+        addLinkModeBtn.addEventListener('click', () => { setDrawMode('addLinks'); });
+        selectModeBtn.addEventListener('click', () => { setDrawMode('select'); });
+
+        linkOffsetSlider.addEventListener('input', (e) => { 
+            linkGlobalOffset = parseInt(e.target.value);
+            linkOffsetValueDisplay.textContent = linkGlobalOffset;
+            if (currentBackgroundMode === 'osm') {
+                updateAllOsmLinkOffsets();
+            } else {
+                redrawCanvasElements();
+            }
+        });
+        resetLinkOffsetBtn.addEventListener('click', () => { 
+            linkOffsetSlider.value = 0;
+            linkGlobalOffset = 0;
+            linkOffsetValueDisplay.textContent = '0';
+            if (currentBackgroundMode === 'osm') {
+                updateAllOsmLinkOffsets();
+            } else {
+                redrawCanvasElements();
+            }
+        });
+
+        deleteSelectedBtn.addEventListener('click', () => { if (!selectedElement && multipleSelectedElements.length === 0) { alert("No element(s) selected."); return; } if (selectedElement && selectedElement.type === 'transitStop') { if (confirm(`Delete T.Stop ${selectedElement.id} and remove from routes?`)) { deleteTransitStop(selectedElement.id); } return; } if (selectedElement && selectedElement.type === 'transitRoute') { deleteSelectedTransitRoute(); return; } let count = selectedElement ? 1 : multipleSelectedElements.length; let type = "element(s)"; if(selectedElement) type = selectedElement.type; else if (multipleSelectedElements.length > 0) type = multipleSelectedElements[0].type + "s (and connected)"; if (confirm(`Delete ${count} selected ${type}? This may also affect connected transit.`)) { let idsToDelete = new Set(); if (selectedElement) idsToDelete.add(selectedElement.id); multipleSelectedElements.forEach(el => idsToDelete.add(el.id)); let linksToRemoveDueToNodeDeletion = new Set(); idsToDelete.forEach(idToDelete => { const nodeIndex = nodes.findIndex(n => n.id === idToDelete); if (nodeIndex > -1) { const node = nodes[nodeIndex]; if (node.isOSM && node.leafletLayer && osmNodeLayerGroup) osmNodeLayerGroup.removeLayer(node.leafletLayer); nodes.splice(nodeIndex, 1); links.forEach(l => { if (l.from === idToDelete || l.to === idToDelete) linksToRemoveDueToNodeDeletion.add(l.id); }); transitStops.filter(ts => ts.nodeId === idToDelete).forEach(ts => deleteTransitStop(ts.id, true)); } else { const linkIndex = links.findIndex(l => l.id === idToDelete); if (linkIndex > -1) { const link = links[linkIndex]; if (link.isOSM && link.leafletLayers && osmLinkLayerGroup) { link.leafletLayers.forEach(layer => osmLinkLayerGroup.removeLayer(layer)); link.leafletLayers = []; } links.splice(linkIndex, 1); transitStops.forEach(ts => { if (ts.linkRefId === idToDelete) { ts.linkRefId = null; console.warn(`LinkRef ${idToDelete} of T.Stop ${ts.id} cleared.`); } }); transitRoutes.forEach(route => { const initialLinkCount = route.linkIds ? route.linkIds.length : 0; if (route.linkIds) route.linkIds = route.linkIds.filter(lId => lId !== idToDelete); if (route.linkIds && route.linkIds.length < initialLinkCount) { console.warn(`Link ${idToDelete} removed from T.Route ${route.id}.`); if (route.isOSM && showTransitLines) drawTransitRouteOSM(route); } }); } } }); links = links.filter(l => { if (linksToRemoveDueToNodeDeletion.has(l.id)) { if (l.isOSM && l.leafletLayers && osmLinkLayerGroup) { l.leafletLayers.forEach(layer => osmLinkLayerGroup.removeLayer(layer)); l.leafletLayers = [];} return false; } return true; }); deselectAll(); if (currentBackgroundMode !== 'osm') redrawCanvasElements(); else { if (osmNodeLayerGroup) osmNodeLayerGroup.eachLayer(l => { if(l.options.fillColor === 'lime' || l.options.fillColor === 'cyan') l.setStyle({fillColor: '#007bff', color: '#007bff'}); }); if (osmLinkLayerGroup && linkGlobalOffset === 0) { osmLinkLayerGroup.eachLayer(l => { if(l._matsimLink && (l.options.color === 'red' || l.options.color === 'cyan')) l.setStyle({color: 'rgba(50,50,50,0.7)', weight: 3 }); }); } else if (osmLinkLayerGroup && linkGlobalOffset !== 0) { updateAllOsmLinkOffsets(); } transitStops.filter(ts => ts.isOSM && ts.leafletLayer).forEach(ts => ts.leafletLayer.setStyle({fillColor: 'purple', color: 'purple'})); } updateExportCrsOptions(); if (nodes.length === 0 && links.length === 0 && transitStops.length === 0) enableBackgroundSwitching(); } });
+        function deleteTransitStop(stopIdToDelete, quiet = false) { const stopIndex = transitStops.findIndex(s => s.id === stopIdToDelete); if (stopIndex === -1) return; const stopToDelete = transitStops[stopIndex]; if (stopToDelete.isOSM && stopToDelete.leafletLayer && osmTransitStopLayerGroup) { osmTransitStopLayerGroup.removeLayer(stopToDelete.leafletLayer); } transitStops.splice(stopIndex, 1); transitRoutes.forEach(route => { const initialStopCount = route.stopProfiles.length; route.stopProfiles = route.stopProfiles.filter(sp => sp.stopId !== stopIdToDelete); if (route.stopProfiles.length < 2 && initialStopCount >= 2) { if (!quiet) console.warn(`Route ${route.id} now has < 2 stops. Path cleared.`); route.linkIds = []; if (route.isOSM && route.leafletLayers) { route.leafletLayers.forEach(l => osmTransitRouteLayerGroup.removeLayer(l)); route.leafletLayers = []; } } else if (route.stopProfiles.length >= 2 && initialStopCount > route.stopProfiles.length) { if (!quiet) console.log(`Recalculating links for T.Route ${route.id}.`); recalculateRouteLinksInternal(route); } }); if (selectedElement && selectedElement.id === stopIdToDelete) deselectAll(); if (currentBackgroundMode !== 'osm') redrawCanvasElements(); if (!quiet) console.log(`Deleted T.Stop ${stopIdToDelete}.`); }
+        deleteAllNodesBtn.addEventListener('click', () => { if (confirm("Delete ALL nodes, links, AND transit data?")) { deselectAll(); nodes = []; links = []; nextNodeId = 1; transitStops = []; transitLines = []; transitRoutes = []; nextTransitStopId = 1; nextTransitLineId = 1; nextTransitRouteId = 1; nextDepartureId = 1; currentManualRouteSequence = []; definedVehicles = []; vehicleIdCounter = 1; firstNodeForLink = null; loadedNetworkCRS = null; if (currentBackgroundMode === 'osm') { if (osmNodeLayerGroup) osmNodeLayerGroup.clearLayers(); if (osmLinkLayerGroup) osmLinkLayerGroup.clearLayers(); if (osmTransitStopLayerGroup) osmTransitStopLayerGroup.clearLayers(); if (osmTransitRouteLayerGroup) osmTransitRouteLayerGroup.clearLayers(); } redrawCanvasElements(); updateExportCrsOptions(); enableBackgroundSwitching(); console.log("All data deleted."); } });
+        deleteAllLinksBtn.addEventListener('click', () => { if (confirm("Delete ALL links? This may affect transit routes and stop linkRefs.")) { deselectAll(); links = []; firstNodeForLink = null; if (currentBackgroundMode === 'osm' && osmLinkLayerGroup) osmLinkLayerGroup.clearLayers(); transitStops.forEach(ts => ts.linkRefId = null); transitRoutes.forEach(tr => { tr.linkIds = []; if (tr.isOSM && tr.leafletLayers) { tr.leafletLayers.forEach(l => osmTransitRouteLayerGroup.removeLayer(l)); tr.leafletLayers = []; drawTransitRouteOSM(tr); } }); redrawCanvasElements(); console.log("All links deleted."); if (nodes.length === 0 && links.length === 0 && transitStops.length === 0) enableBackgroundSwitching(); } });
+        downloadXmlBtn.addEventListener('click', () => { if (nodes.length === 0 && links.length === 0) { alert("No network data to export."); return; } generateAndDownloadXml(outputCrsSelect.value); });
+        loadNetworkBtn.addEventListener('click', () => { 
+            const file = uploadNetworkXmlInput.files[0]; 
+            let crs = uploadedFileCrsSelect.value; 
+            if (!file) { alert("Select XML file."); return; } 
+            if (!crs) { alert("Source CRS is required."); return; } 
+            
+            if (crs === 'CARTESIAN' && currentBackgroundMode === 'osm') {
+                if(!confirm("You are loading Cartesian (X,Y) coordinates onto an OpenStreetMap background. These coordinates will be interpreted as Leaflet's internal projected pixel values (origin top-left of map container), which may not be what you intend. For a true Cartesian display, switch the background to 'None (Blank Canvas)' first. Continue loading?")) {
+                    return;
+                }
+            }
+            if (crs === 'PROJ_PIXELS' && currentBackgroundMode !== 'osm') {
+                 if(!confirm("You are loading 'Projected Pixels' intended for an OSM background, but the current background is not OSM. This might lead to unexpected placement. For correct display, switch background to OSM first. Continue loading?")) {
+                    return;
+                 }
+            }
+
+
+            const reader = new FileReader(); 
+            reader.onload = (e) => { 
+                try { 
+                    let xmlStr; 
+                    if (file.name.toLowerCase().endsWith('.gz')) { 
+                        xmlStr = pako.inflate(new Uint8Array(e.target.result), { to: 'string' }); 
+                    } else { 
+                        xmlStr = e.target.result; 
+                    } 
+                    parseAndLoadNetwork(xmlStr, crs); 
+                } catch (err) { 
+                    console.error("File processing error:", err); 
+                    alert("Error: " + err.message); 
+                } 
+            }; 
+            reader.onerror = (err) => { 
+                console.error("File reading error:", err); 
+                alert("File reading error."); 
+            }; 
+            if (file.name.toLowerCase().endsWith('.gz')) { 
+                reader.readAsArrayBuffer(file); 
+            } else { 
+                reader.readAsText(file); 
+            } 
+        });
+        applyLinkChangesBtn.addEventListener('click', () => { if (!selectedElement || selectedElement.type !== 'link') { alert("No link selected."); return; } const lenStr = linkAttrLengthInput.value.trim(); if (lenStr === "") { delete selectedElement.length_override; } else { const len = parseFloat(lenStr); if (!isNaN(len) && len >= 0) { selectedElement.length_override = len; } else { alert("Invalid length."); } } selectedElement.freespeed = parseFloat(linkAttrFreespeedInput.value); selectedElement.capacity = parseFloat(linkAttrCapacityInput.value); selectedElement.permlanes = parseFloat(linkAttrPermlanesInput.value); selectedElement.modes = linkAttrModesInput.value.trim(); if (isNaN(selectedElement.freespeed)) selectedElement.freespeed = 20.0; if (isNaN(selectedElement.capacity)) selectedElement.capacity = 3600.0; if (isNaN(selectedElement.permlanes)) selectedElement.permlanes = 1.0; if (!selectedElement.modes) selectedElement.modes = "rail"; alert(`Link ${selectedElement.id} updated.`); });
+        closeLinkEditorBtn.addEventListener('click', () => { hideLinkAttributeEditor(); });
+        addTransitStopModeBtn.addEventListener('click', () => setDrawMode('addTransitStop'));
+        addTransitLineModeBtn.addEventListener('click', () => setDrawMode('addTransitLine'));
+        finalizeTransitLineBtn.addEventListener('click', finalizeCurrentTransitLine);
+        cancelTransitLineBtn.addEventListener('click', () => { cancelCurrentTransitLine(); setDrawMode('select'); });
+
+        loadScheduleBtn.addEventListener('click', () => { 
+            const file = uploadScheduleXmlInput.files[0];
+            if (!file) {
+                alert("Please select a Transit Schedule XML/GZ file.");
+                return;
+            }
+            const stopCrs = scheduleFileCrsSelect.value; 
+
+             if (stopCrs === 'CARTESIAN' && currentBackgroundMode === 'osm') {
+                if(!confirm("You are loading a schedule with Cartesian (X,Y) stop coordinates onto an OpenStreetMap background. These coordinates will be interpreted as Leaflet's internal projected pixel values. For a true Cartesian display, switch the background to 'None (Blank Canvas)' first and ensure your network (if any) also uses Cartesian coordinates. Continue loading?")) {
+                    return;
+                }
+            }
+             if (stopCrs === 'PROJ_PIXELS' && currentBackgroundMode !== 'osm') {
+                 if(!confirm("You are loading a schedule with 'Projected Pixels' stop coordinates (intended for OSM background), but the current background is not OSM. This might lead to unexpected stop placement. For correct display, switch background to OSM first. Continue loading?")) {
+                    return;
+                 }
+            }
+
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    let xmlStr;
+                    if (file.name.toLowerCase().endsWith('.gz')) {
+                        xmlStr = pako.inflate(new Uint8Array(e.target.result), { to: 'string' });
+                    } else {
+                        xmlStr = e.target.result;
+                    }
+                    parseAndLoadTransitSchedule(xmlStr, stopCrs);
+                } catch (err) {
+                    console.error("Transit Schedule file processing error:", err);
+                    alert("Error processing Transit Schedule file: " + err.message);
+                }
+            };
+            reader.onerror = (err) => {
+                console.error("File reading error:", err);
+                alert("File reading error for Transit Schedule.");
+            };
+
+            if (file.name.toLowerCase().endsWith('.gz')) {
+                reader.readAsArrayBuffer(file);
+            } else {
+                reader.readAsText(file);
+            }
+        });
+
+
+        toggleNodesLayerCheckbox.addEventListener('change', (e) => {
+            showNodes = e.target.checked;
+            if (currentBackgroundMode === 'osm' && leafletMap) {
+                if (showNodes) leafletMap.addLayer(osmNodeLayerGroup);
+                else leafletMap.removeLayer(osmNodeLayerGroup);
+            } else {
+                redrawCanvasElements();
+            }
+            if (!showNodes && (selectedElement?.type === 'node' || multipleSelectedElements.some(el => el.type === 'node'))) {
+                deselectAll();
+            }
+        });
+        toggleLinksLayerCheckbox.addEventListener('change', (e) => {
+            showLinks = e.target.checked;
+            if (currentBackgroundMode === 'osm' && leafletMap) {
+                if (showLinks) {
+                    leafletMap.addLayer(osmLinkLayerGroup);
+                    updateAllOsmLinkOffsets(); 
+                } else {
+                    leafletMap.removeLayer(osmLinkLayerGroup);
+                }
+            } else {
+                redrawCanvasElements();
+            }
+            if (!showLinks && (selectedElement?.type === 'link' || multipleSelectedElements.some(el => el.type === 'link'))) {
+                deselectAll();
+            }
+        });
+        toggleTransitStopsLayerCheckbox.addEventListener('change', (e) => {
+            showTransitStops = e.target.checked;
+            if (currentBackgroundMode === 'osm' && leafletMap) {
+                if (showTransitStops) leafletMap.addLayer(osmTransitStopLayerGroup);
+                else leafletMap.removeLayer(osmTransitStopLayerGroup);
+            } else {
+                redrawCanvasElements();
+            }
+            if (!showTransitStops && (selectedElement?.type === 'transitStop' || multipleSelectedElements.some(el => el.type === 'transitStop'))) {
+                deselectAll();
+            }
+        });
+        toggleTransitLinesLayerCheckbox.addEventListener('change', (e) => {
+            showTransitLines = e.target.checked;
+            if (currentBackgroundMode === 'osm' && leafletMap) {
+                if (showTransitLines) {
+                     osmTransitRouteLayerGroup.clearLayers();
+                     transitRoutes.forEach(route => {
+                        if (route.isOSM) {
+                            drawTransitRouteOSM(route);
+                        }
+                    });
+                    if (!leafletMap.hasLayer(osmTransitRouteLayerGroup)) {
+                        leafletMap.addLayer(osmTransitRouteLayerGroup);
+                    }
+                } else {
+                     if (leafletMap.hasLayer(osmTransitRouteLayerGroup)) {
+                        leafletMap.removeLayer(osmTransitRouteLayerGroup);
+                     }
+                }
+            } else {
+                redrawCanvasElements();
+            }
+            if (!showTransitLines && (selectedElement?.type === 'transitRoute' || multipleSelectedElements.some(el => el.type === 'transitRoute'))) {
+                deselectAll();
+            }
+        });
+
+
+        downloadScheduleXmlBtn.addEventListener('click', downloadTransitScheduleXml);
+        downloadVehiclesXmlBtn.addEventListener('click', downloadVehiclesXml);
+        applyTsChangesBtn.addEventListener('click', applyTransitStopChanges);
+        closeTsEditorBtn.addEventListener('click', hideTransitStopAttributeEditor);
+        recalculateRouteLinksBtn.addEventListener('click', () => { if (selectedElement && selectedElement.type === 'transitRoute') { if (confirm("Recalculate route links using shortest path? Manual link sequence will be lost.")) { recalculateRouteLinksInternal(selectedElement); showTransitRouteAttributeEditor(selectedElement); if (selectedElement.isOSM && showTransitLines) drawTransitRouteOSM(selectedElement); else if (!selectedElement.isOSM && showTransitLines) redrawCanvasElements(); alert("Route links recalculated."); } } else { alert("Select transit route first."); } });
+        applyTrChangesBtn.addEventListener('click', applyTransitRouteChanges);
+        closeTrEditorBtn.addEventListener('click', hideTransitRouteAttributeEditor);
+        deleteSelectedRouteBtn.addEventListener('click', deleteSelectedTransitRoute);
+        trAddDepartureBtn.addEventListener('click', addDepartureToRouteEditor);
+        cancelOverlapChoiceBtn.addEventListener('click', () => { hideOverlapChoiceDialog(); });
+
+        canvas.addEventListener('mousedown', (event) => { if (currentBackgroundMode === 'osm') return; const rect = canvas.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const mouseY = event.clientY - rect.top; if (event.button === 0) { if (currentDrawMode === 'addNodes') { addNodeCanvas(mouseX, mouseY); } else if (currentDrawMode === 'addLinks') { handleLinkClickCanvas(mouseX, mouseY); } else if (currentDrawMode === 'select') { handleGeneralSelectClick(mouseX, mouseY, event.shiftKey); } else if (currentDrawMode === 'addTransitStop') { const clickedNode = findNodeAtScreenCanvas(mouseX, mouseY); if (clickedNode) addTransitStop(clickedNode); else alert("Click on existing node."); } else if (currentDrawMode === 'addTransitLine') { const clickedStop = findTransitStopAtScreenCanvas(mouseX, mouseY); const clickedLink = findLinkAtScreenCanvas(mouseX, mouseY); if (clickedStop) addElementToManualRoute(clickedStop, 'stop'); else if (clickedLink) addElementToManualRoute(clickedLink, 'link'); } } else if (event.button === 1 || (event.button === 0 && event.ctrlKey)) { isPanning = true; lastPanX = mouseX; lastPanY = mouseY; } });
+        canvas.addEventListener('mousemove', (event) => { if (currentBackgroundMode === 'osm') return; const rect = canvas.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const mouseY = event.clientY - rect.top; const mapCoords = screenToCanvasMapCoords(mouseX, mouseY); coordsStatus.textContent = `Canvas:(${mouseX},${mouseY})|Map:(${mapCoords.x.toFixed(0)},${mapCoords.y.toFixed(0)})`; if (isPanning) { panX += mouseX - lastPanX; panY += mouseY - lastPanY; lastPanX = mouseX; lastPanY = mouseY; redrawCanvasElements(); } else if (isMarqueeSelecting) { marqueeEnd = { x: mouseX, y: mouseY }; redrawCanvasElements(); } else if (currentDrawMode === 'addLinks' && firstNodeForLink && !firstNodeForLink.isOSM) { redrawCanvasElements(); const startNodeScreen = canvasMapToScreenCoords(firstNodeForLink.x, firstNodeForLink.y); ctx.beginPath(); ctx.moveTo(startNodeScreen.x, startNodeScreen.y); ctx.lineTo(mouseX, mouseY); ctx.strokeStyle = 'rgba(0,0,255,0.5)'; ctx.lineWidth = 2; ctx.stroke(); } });
+        canvas.addEventListener('mouseup', (event) => { if (currentBackgroundMode === 'osm') return; if (isPanning) { isPanning = false; return; } if (isMarqueeSelecting) { isMarqueeSelecting = false; selectElementsInMarquee(); redrawCanvasElements(); } });
+        canvas.addEventListener('mouseleave', () => { if (currentBackgroundMode !== 'osm') { isPanning = false; if (isMarqueeSelecting) { isMarqueeSelecting = false; selectElementsInMarquee(); redrawCanvasElements(); } } });
+        canvas.addEventListener('wheel', (event) => { if (currentBackgroundMode === 'osm') return; event.preventDefault(); const rect = canvas.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const mouseY = event.clientY - rect.top; const zoomIntensity = 0.1; const delta = event.deltaY > 0 ? -1 : 1; const oldViewScale = viewScale; viewScale += delta * zoomIntensity * viewScale; viewScale = Math.max(MIN_VIEW_SCALE, Math.min(MAX_VIEW_SCALE, viewScale)); panX = mouseX - (mouseX - panX) * (viewScale / oldViewScale); panY = mouseY - (mouseY - panY) * (viewScale / oldViewScale); redrawCanvasElements(); });
+
+        // --- Core Functions ---
+        function showLinkAttributeEditor(link) { if (!link || link.type !== 'link') return; selectedElement = link; linkAttrIdInput.value = link.id; let displayLength = ''; if (typeof link.length_override === 'number') { displayLength = link.length_override.toFixed(1); } else { let len = calculateLinkLength(link, nodes); if (typeof len === 'number') displayLength = len.toFixed(1); } linkAttrLengthInput.value = displayLength; linkAttrLengthInput.placeholder = displayLength ? `Def: ${displayLength}` : "Calc"; linkAttrFreespeedInput.value = typeof link.freespeed === 'number' ? link.freespeed : 20.0; linkAttrCapacityInput.value = typeof link.capacity === 'number' ? link.capacity : 3600.0; linkAttrPermlanesInput.value = typeof link.permlanes === 'number' ? link.permlanes : 1.0; linkAttrModesInput.value = link.modes || "rail"; linkAttributeEditorPanel.classList.remove('hidden'); transitStopAttributeEditorPanel.classList.add('hidden'); transitRouteAttributeEditorPanel.classList.add('hidden'); }
+        function hideLinkAttributeEditor() { linkAttributeEditorPanel.classList.add('hidden'); }
+
+        function deselectAll() {
+            hideLinkAttributeEditor();
+            hideTransitStopAttributeEditor();
+            hideTransitRouteAttributeEditor();
+            hideOverlapChoiceDialog();
+
+            const oldSelected = selectedElement;
+            const oldMultipleSelected = [...multipleSelectedElements];
+
+            selectedElement = null;
+            multipleSelectedElements = [];
+
+            const elementStillExistsInData = (el) => {
+                if (!el || !el.id || !el.type) return false;
+                switch (el.type) {
+                    case 'node': return nodes.some(n => n.id === el.id);
+                    case 'link': return links.some(l_ => l_.id === el.id); 
+                    case 'transitStop': return transitStops.some(ts => ts.id === el.id);
+                    case 'transitRoute': return transitRoutes.some(tr => tr.id === el.id);
+                    default: return false;
+                }
+            };
+
+            if (oldSelected) {
+                if (elementStillExistsInData(oldSelected)) { 
+                    if (oldSelected.type === 'link' && oldSelected.isOSM && oldSelected.leafletLayers && oldSelected.leafletLayers[0]) {
+                        updateSingleOsmLinkOffset(oldSelected); 
+                        oldSelected.leafletLayers.forEach(l => l.setStyle({ color: 'rgba(50,50,50,0.7)', weight: 3 }));
+                    } else if (oldSelected.type === 'node' && oldSelected.isOSM && oldSelected.leafletLayer) {
+                        oldSelected.leafletLayer.setStyle({ fillColor: '#007bff', color: '#007bff' });
+                    } else if (oldSelected.type === 'transitStop' && oldSelected.isOSM && oldSelected.leafletLayer) {
+                        oldSelected.leafletLayer.setStyle({ fillColor: 'purple', color: 'purple', radius: TRANSIT_STOP_RADIUS_SCREEN });
+                    } else if (oldSelected.type === 'transitRoute') {
+                        if (oldSelected.isOSM && osmTransitRouteLayerGroup && showTransitLines) {
+                            drawTransitRouteOSM(oldSelected); 
+                        }
+                    }
+                }
+            }
+
+            oldMultipleSelected.forEach(el => {
+                if (elementStillExistsInData(el)) { 
+                    if (el.isOSM) {
+                        if (el.type === 'link' && el.leafletLayers && el.leafletLayers[0]) {
+                             updateSingleOsmLinkOffset(el); 
+                             el.leafletLayers.forEach(l => l.setStyle({ color: 'rgba(50,50,50,0.7)', weight: 3 }));
+                        } else if (el.type === 'node' && el.leafletLayer) {
+                            el.leafletLayer.setStyle({fillColor: '#007bff', color: '#007bff'});
+                        } else if (el.type === 'transitStop' && el.leafletLayer) {
+                            el.leafletLayer.setStyle({ fillColor: 'purple', color: 'purple', radius: TRANSIT_STOP_RADIUS_SCREEN });
+                        } else if (el.type === 'transitRoute' && el.isOSM && osmTransitRouteLayerGroup && showTransitLines) {
+                            drawTransitRouteOSM(el); 
+                        }
+                    }
+                }
+            });
+
+            if (firstNodeForLink) {
+                const nodeExists = nodes.some(n => n.id === firstNodeForLink.id);
+                if (nodeExists && firstNodeForLink.isOSM && firstNodeForLink.leafletLayer) {
+                    firstNodeForLink.leafletLayer.setStyle({ color: '#007bff', fillColor: '#007bff' });
+                }
+                firstNodeForLink = null; 
+            }
+
+            if (currentDrawMode !== 'addTransitLine') { 
+                currentManualRouteSequence.forEach(item => {
+                    if (item.type === 'stop') {
+                        const stopObj = transitStops.find(s => s.id === item.id); 
+                        if (stopObj && stopObj.isOSM && stopObj.leafletLayer) {
+                            stopObj.leafletLayer.setStyle({fillColor: 'purple', color: 'purple', radius: TRANSIT_STOP_RADIUS_SCREEN});
+                        }
+                    } else if (item.type === 'link') {
+                        const linkObj = links.find(l_ => l_.id === item.id); 
+                        if (linkObj && linkObj.isOSM && linkObj.leafletLayers) {
+                             updateSingleOsmLinkOffset(linkObj); 
+                             linkObj.leafletLayers.forEach(l => l.setStyle({color: 'rgba(50,50,50,0.7)', weight: 3}));
+                        }
+                    }
+                });
+                 currentManualRouteSequence = []; 
+            }
+
+
+            if (currentBackgroundMode !== 'osm' && !canvas.classList.contains('hidden')) {
+                redrawCanvasElements();
+            }
+        }
+
+        function initLeafletMap() { if (leafletMap) { if (osmNodeLayerGroup) osmNodeLayerGroup.clearLayers(); if (osmLinkLayerGroup) osmLinkLayerGroup.clearLayers(); if (osmTransitStopLayerGroup) osmTransitStopLayerGroup.clearLayers(); if (osmTransitRouteLayerGroup) osmTransitRouteLayerGroup.clearLayers(); leafletMapContainer.classList.remove('hidden'); leafletMap.invalidateSize(); return; } leafletMapContainer.classList.remove('hidden'); if (leafletMapContainer.clientHeight === 0 || leafletMapContainer.clientWidth === 0) { console.warn("Leaflet container no dimensions."); } leafletMap = L.map(leafletMapContainer); osmTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM' }).addTo(leafletMap); osmNodeLayerGroup = L.featureGroup().addTo(leafletMap); osmLinkLayerGroup = L.featureGroup().addTo(leafletMap); osmTransitStopLayerGroup = L.featureGroup().addTo(leafletMap); osmTransitRouteLayerGroup = L.featureGroup().addTo(leafletMap); leafletMap.setView([46.947, 7.447], 13); leafletMap.on('click', (e) => { if (currentDrawMode === 'addNodes') { addNodeOSM(e.latlng); } else if (currentDrawMode === 'addTransitStop') { let closestNode = null; let minDist = Infinity; nodes.filter(n => n.isOSM && n.latlng).forEach(node => { const dist = e.latlng.distanceTo(node.latlng); const tol = (NODE_CLICK_RADIUS_SCREEN * 3) / leafletMap.getZoomScale(leafletMap.getZoom(), leafletMap.getMaxZoom()); if (dist < minDist && dist < tol ) { minDist = dist; closestNode = node; } }); if (closestNode) addTransitStop(closestNode); else alert("Click closer to existing node."); } else if (currentDrawMode === 'select' ) { if (!e.originalEvent.defaultPrevented && !isMarqueeSelecting) { const targetIsMap = e.originalEvent.target === leafletMap.getContainer() || e.originalEvent.target === leafletMapContainer || e.originalEvent.target === osmTileLayer.getContainer(); if (targetIsMap) { deselectAll(); } } } else if (currentDrawMode === 'addTransitLine'){ /* Clicks on map BG are ignored */ } }); leafletMap.on('mousemove', (e) => { coordsStatus.textContent = `OSM: (${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)})`; }); leafletMap.on('zoomend', () => { if (linkGlobalOffset !== 0 && currentBackgroundMode === 'osm') updateAllOsmLinkOffsets(); }); setTimeout(() => { if (leafletMap) leafletMap.invalidateSize(); }, 100); }
+        function switchBackgroundMode(mode, calledFromLoad = false) { 
+            if (currentBackgroundMode !== mode || calledFromLoad) { 
+                deselectAll(); 
+                if(currentDrawMode === 'addTransitLine') cancelCurrentTransitLine(); 
+                nodes = []; links = []; nextNodeId = 1; 
+                transitStops = []; transitLines = []; transitRoutes = []; 
+                nextTransitStopId = 1; nextTransitLineId = 1; nextTransitRouteId = 1; nextDepartureId = 1; 
+                currentManualRouteSequence = []; definedVehicles = []; vehicleIdCounter = 1; 
+                backgroundImage = null; 
+                loadedNetworkCRS = null; 
+                if (osmNodeLayerGroup) osmNodeLayerGroup.clearLayers(); 
+                if (osmLinkLayerGroup) osmLinkLayerGroup.clearLayers(); 
+                if (osmTransitStopLayerGroup) osmTransitStopLayerGroup.clearLayers(); 
+                if (osmTransitRouteLayerGroup) osmTransitRouteLayerGroup.clearLayers(); 
+                if (!calledFromLoad) { enableBackgroundSwitching(); } 
+            } 
+            currentBackgroundMode = mode; 
+            bgModeSelect.value = mode; 
+            imageUploadContainer.classList.toggle('hidden', mode !== 'image'); 
+            if (mode === 'osm') { 
+                canvas.classList.add('hidden'); 
+                leafletMapContainer.classList.remove('hidden'); 
+                if (!leafletMap) { initLeafletMap(); } 
+                else { 
+                    if (calledFromLoad && osmNodeLayerGroup && osmLinkLayerGroup && osmTransitStopLayerGroup && osmTransitRouteLayerGroup) { 
+                        osmNodeLayerGroup.clearLayers(); osmLinkLayerGroup.clearLayers(); osmTransitStopLayerGroup.clearLayers(); osmTransitRouteLayerGroup.clearLayers(); 
+                    } 
+                    leafletMap.invalidateSize(); 
+                } 
+                coordsStatus.textContent = `OSM. Click map.`; 
+                if (linkGlobalOffset !== 0) updateAllOsmLinkOffsets(); 
+                uploadedFileCrsSelect.value = "EPSG:4326";
+                scheduleFileCrsSelect.value = "EPSG:4326";
+            } else { 
+                leafletMapContainer.classList.add('hidden'); 
+                canvas.classList.remove('hidden'); 
+                resizeEditorElements(); 
+                coordsStatus.textContent = `Mouse:(0,0)|Map:(0,0)`; 
+                if (mode === 'none') {
+                    uploadedFileCrsSelect.value = "CARTESIAN";
+                    scheduleFileCrsSelect.value = "CARTESIAN";
+                } else { 
+                     uploadedFileCrsSelect.value = "PROJ_PIXELS"; 
+                     scheduleFileCrsSelect.value = "PROJ_PIXELS";
+                }
+            } 
+            const newDrawMode = currentDrawMode || 'addNodes'; 
+            if ( (newDrawMode === 'addTransitStop' || newDrawMode === 'addTransitLine') && mode !== 'osm' && nodes.length === 0) { 
+                setDrawMode('addNodes'); 
+            } else { 
+                setDrawMode(newDrawMode); 
+            } 
+            updateExportCrsOptions(); 
+            trDefaultVehicleTypeSelect.innerHTML = ''; 
+            defaultVehicleTypes.forEach(vt => { const opt = document.createElement('option'); opt.value = vt.id; opt.textContent = vt.id; trDefaultVehicleTypeSelect.appendChild(opt); });  
+            showNodes = true; toggleNodesLayerCheckbox.checked = true; 
+            showLinks = true; toggleLinksLayerCheckbox.checked = true; 
+            showTransitStops = true; toggleTransitStopsLayerCheckbox.checked = true; 
+            showTransitLines = true; toggleTransitLinesLayerCheckbox.checked = true; 
+        }
+        function setDrawMode(mode) { if (currentDrawMode === 'addLinks' && firstNodeForLink && mode !== 'addLinks') { if (firstNodeForLink.isOSM && firstNodeForLink.leafletLayer) { firstNodeForLink.leafletLayer.setStyle({ color: '#007bff', fillColor: '#007bff' }); } firstNodeForLink = null; if (currentBackgroundMode !== 'osm') redrawCanvasElements(); } if (currentDrawMode === 'addTransitLine' && mode !== 'addTransitLine') { cancelCurrentTransitLine(); } const isSwitchingToSelect = mode === 'select'; const isCurrentlyInSelect = currentDrawMode === 'select'; if (!isSwitchingToSelect && (selectedElement || multipleSelectedElements.length > 0)) { deselectAll(); } else if (isSwitchingToSelect && !isCurrentlyInSelect && (selectedElement || multipleSelectedElements.length > 0)) { deselectAll(); } currentDrawMode = mode; [addNodeModeBtn, addLinkModeBtn, selectModeBtn, addTransitStopModeBtn, addTransitLineModeBtn].forEach(btn => btn.classList.remove('active')); if (mode === 'addNodes') addNodeModeBtn.classList.add('active'); else if (mode === 'addLinks') addLinkModeBtn.classList.add('active'); else if (mode === 'select') selectModeBtn.classList.add('active'); else if (mode === 'addTransitStop') addTransitStopModeBtn.classList.add('active'); else if (mode === 'addTransitLine') addTransitLineModeBtn.classList.add('active'); finalizeTransitLineBtn.classList.toggle('hidden', mode !== 'addTransitLine' || currentManualRouteSequence.length < 3 || currentManualRouteSequence[0].type !== 'stop' || currentManualRouteSequence[currentManualRouteSequence.length-1].type !== 'stop' || !currentManualRouteSequence.some(item => item.type === 'link')); cancelTransitLineBtn.classList.toggle('hidden', mode !== 'addTransitLine'); let statusText = "Unknown"; let cursorStyle = 'default'; if (mode === 'addNodes') { statusText = 'Add Nodes'; cursorStyle = 'crosshair';} else if (mode === 'addLinks') { statusText = 'Add Links'; cursorStyle = 'pointer'; } else if (mode === 'select') { statusText = 'Select (filtered by Layers)'; cursorStyle = 'grab'; } else if (mode === 'addTransitStop') { statusText = 'Add T.Stop (on Node)'; cursorStyle = 'copy'; } else if (mode === 'addTransitLine') { statusText = 'Add T.Line (Stop->Link->Stop...)'; cursorStyle = 'cell'; } currentModeStatus.textContent = `Mode: ${statusText}`; if (currentBackgroundMode === 'osm' && leafletMapContainer) leafletMapContainer.style.cursor = cursorStyle; else canvas.style.cursor = cursorStyle; }
+
+        function screenToCanvasMapCoords(sX, sY) { return { x: (sX - panX) / viewScale, y: (sY - panY) / viewScale }; }
+        function canvasMapToScreenCoords(mX, mY) { return { x: mX * viewScale + panX, y: mY * viewScale + panY }; }
+        function addNodeCanvas(sX, sY) { const mC = screenToCanvasMapCoords(sX, sY); const nN = { id: `n${nextNodeId++}`, x: mC.x, y: mC.y, isOSM: false, type: 'node' }; nodes.push(nN); redrawCanvasElements(); updateExportCrsOptions(); disableBackgroundSwitching(); }
+        function addNodeOSM(ll) { if (!leafletMap || !osmNodeLayerGroup) { console.error("Map/layer not ready"); return; } const p = leafletMap.project(ll); const nN = { id: `n${nextNodeId++}`, x: p.x, y: p.y, isOSM: true, latlng: ll, type: 'node' }; nodes.push(nN); const m = L.circleMarker(ll, { radius: NODE_RADIUS_SCREEN, color: '#007bff', fillColor: '#007bff', fillOpacity: 0.8, weight: 2 }).addTo(osmNodeLayerGroup); m.bindTooltip(nN.id); m.on('click', (e) => { L.DomEvent.stopPropagation(e); if (currentDrawMode === 'addLinks') handleLinkClickOSM(nN); else if (currentDrawMode === 'select') handleSelectOSMElement(nN, e.originalEvent.shiftKey); else if (currentDrawMode === 'addTransitStop') addTransitStop(nN); }); nN.leafletLayer = m; updateExportCrsOptions(); disableBackgroundSwitching(); }
+        function handleSelectElement(el, isShift) { if (el.type === 'transitStop' || el.type === 'transitRoute') { isShift = false; } if (!isShift) { deselectAll(); selectedElement = el; if (el.type === 'link') { showLinkAttributeEditor(el); if (el.isOSM && el.leafletLayers && el.leafletLayers[0]) { el.leafletLayers.forEach(l => l.setStyle({ color: 'red', weight: 5 })); } } else if (el.type === 'node') { hideLinkAttributeEditor(); hideTransitStopAttributeEditor(); hideTransitRouteAttributeEditor(); if (el.isOSM && el.leafletLayer) { el.leafletLayer.setStyle({ fillColor: 'lime', color: 'green' }); } } else if (el.type === 'transitStop') { showTransitStopAttributeEditor(el); if (el.isOSM && el.leafletLayer) { el.leafletLayer.setStyle({ fillColor: 'yellow', color: 'orange', radius: TRANSIT_STOP_RADIUS_SCREEN + 1 }); } } else if (el.type === 'transitRoute') { showTransitRouteAttributeEditor(el); if (el.isOSM && showTransitLines) { drawTransitRouteOSM(el); } } } else { if (selectedElement) { if (!multipleSelectedElements.find(e => e.id === selectedElement.id)) { multipleSelectedElements.push(selectedElement); } if (selectedElement.isOSM) { if (selectedElement.type === 'link' && selectedElement.leafletLayers && selectedElement.leafletLayers[0]) selectedElement.leafletLayers.forEach(l => l.setStyle({ color: 'cyan', weight: 4 })); else if (selectedElement.type === 'node' && selectedElement.leafletLayer) selectedElement.leafletLayer.setStyle({fillColor: 'cyan', color: 'blue'}); else if (selectedElement.type === 'transitStop' && selectedElement.leafletLayer) selectedElement.leafletLayer.setStyle({fillColor: 'cyan', color: 'blue', radius: TRANSIT_STOP_RADIUS_SCREEN +1}); else if (selectedElement.type === 'transitRoute' && selectedElement.isOSM && showTransitLines) drawTransitRouteOSM(selectedElement); } selectedElement = null; } const idx = multipleSelectedElements.findIndex(e => e.id === el.id); if (idx > -1) { const d = multipleSelectedElements.splice(idx, 1)[0]; if (d.isOSM) { if (d.type === 'link' && d.leafletLayers && d.leafletLayers[0]) { updateSingleOsmLinkOffset(d); d.leafletLayers.forEach(l => l.setStyle({ color: 'rgba(50,50,50,0.7)', weight: 3 }));} else if (d.type === 'node' && d.leafletLayer) d.leafletLayer.setStyle({fillColor: '#007bff', color: '#007bff'}); else if (d.type === 'transitStop' && d.leafletLayer) d.leafletLayer.setStyle({ fillColor: 'purple', color: 'purple', radius: TRANSIT_STOP_RADIUS_SCREEN }); else if (d.type === 'transitRoute' && d.isOSM && showTransitLines) drawTransitRouteOSM(d); } } else { multipleSelectedElements.push(el); if (el.isOSM) { if (el.type === 'link' && el.leafletLayers && el.leafletLayers[0]) el.leafletLayers.forEach(l => l.setStyle({ color: 'cyan', weight: 4 })); else if (el.type === 'node' && el.leafletLayer) el.leafletLayer.setStyle({fillColor: 'cyan', color: 'blue'}); else if (el.type === 'transitStop' && el.leafletLayer) el.leafletLayer.setStyle({fillColor: 'cyan', color: 'blue', radius: TRANSIT_STOP_RADIUS_SCREEN +1}); else if (el.type === 'transitRoute' && el.isOSM && showTransitLines) drawTransitRouteOSM(el); } } hideLinkAttributeEditor(); hideTransitStopAttributeEditor(); hideTransitRouteAttributeEditor(); } if (currentBackgroundMode !== 'osm') redrawCanvasElements(); }
+        function addToMultipleSelection(el) { const i = multipleSelectedElements.findIndex(e => e.id === el.id); if (i === -1) { multipleSelectedElements.push(el); if (el.isOSM) { if (el.type === 'link' && el.leafletLayers && el.leafletLayers[0]) el.leafletLayers.forEach(l => l.setStyle({ color: 'cyan', weight: 4 })); else if (el.type === 'node' && el.leafletLayer) el.leafletLayer.setStyle({fillColor: 'cyan', color: 'blue'}); else if (el.type === 'transitStop' && el.leafletLayer) el.leafletLayer.setStyle({fillColor: 'cyan', color: 'blue', radius: TRANSIT_STOP_RADIUS_SCREEN +1}); else if (el.type === 'transitRoute' && el.isOSM && showTransitLines) drawTransitRouteOSM(el); } } selectedElement = null; hideLinkAttributeEditor(); hideTransitStopAttributeEditor(); hideTransitRouteAttributeEditor(); if (currentBackgroundMode !== 'osm') redrawCanvasElements(); }
+        function handleLinkClickCanvas(sX, sY) { if (currentDrawMode !== 'addLinks') return; const n = findNodeAtScreenCanvas(sX, sY); if (!n) return; processLinkSelection(n); }
+        function handleLinkClickOSM(n) { if (currentDrawMode !== 'addLinks') return; processLinkSelection(n); }
+        function processLinkSelection(cN) { if (currentDrawMode !== 'addLinks') return; if (selectedElement && selectedElement !== firstNodeForLink) deselectAll(); if (!firstNodeForLink) { firstNodeForLink = cN; if (firstNodeForLink.isOSM && firstNodeForLink.leafletLayer) { firstNodeForLink.leafletLayer.setStyle({ color: 'orange', fillColor: 'orange' }); } else if (!firstNodeForLink.isOSM) { redrawCanvasElements(); } } else { if (firstNodeForLink.isOSM && firstNodeForLink.leafletLayer) { firstNodeForLink.leafletLayer.setStyle({ color: '#007bff', fillColor: '#007bff' }); } if (cN.id !== firstNodeForLink.id) { addLink(firstNodeForLink, cN); } else { console.log("Same node clicked."); } firstNodeForLink = null; if (currentBackgroundMode !== 'osm') redrawCanvasElements(); } }
+        function findNodeAtScreenCanvas(sX, sY) { for (let i = nodes.length - 1; i >= 0; i--) { const n = nodes[i]; if (n.isOSM) continue; const nPos = canvasMapToScreenCoords(n.x, n.y); const d = Math.sqrt((sX - nPos.x) ** 2 + (sY - nPos.y) ** 2); if (d < (NODE_CLICK_RADIUS_SCREEN / viewScale)) return n; } return null; }
+        function findLinkAtScreenCanvas(sX, sY) {
+            const mapClick = screenToCanvasMapCoords(sX, sY);
+            const tolerance = LINK_CLICK_TOLERANCE / viewScale;
+
+            for (const l of links.filter(li => !li.isOSM)) {
+                const fN = nodes.find(n => n.id === l.from && !n.isOSM);
+                const tN = nodes.find(n => n.id === l.to && !n.isOSM);
+                if (!fN || !tN) continue;
+
+                let x1 = fN.x, y1 = fN.y, x2 = tN.x, y2 = tN.y;
+
+                if (linkGlobalOffset !== 0) { 
+                    const dx_orig = x2 - x1;
+                    const dy_orig = y2 - y1;
+                    const len_orig = Math.sqrt(dx_orig * dx_orig + dy_orig * dy_orig);
+                    if (len_orig > 0) {
+                        const perpX = -dy_orig / len_orig;
+                        const perpY = dx_orig / len_orig;
+                        const offsetVal = linkGlobalOffset / viewScale;
+                        x1 += perpX * offsetVal;
+                        y1 += perpY * offsetVal;
+                        x2 += perpX * offsetVal;
+                        y2 += perpY * offsetVal;
+                    }
+                }
+                
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const lenSq = dx * dx + dy * dy;
+
+                if (lenSq === 0) { 
+                    if (Math.sqrt(Math.pow(mapClick.x - x1, 2) + Math.pow(mapClick.y - y1, 2)) <= tolerance) return l;
+                    continue;
+                }
+                let t = ((mapClick.x - x1) * dx + (mapClick.y - y1) * dy) / lenSq;
+                t = Math.max(0, Math.min(1, t)); 
+                const closestX = x1 + t * dx;
+                const closestY = y1 + t * dy;
+                if (Math.sqrt(Math.pow(mapClick.x - closestX, 2) + Math.pow(mapClick.y - closestY, 2)) <= tolerance) return l;
+            }
+            return null;
+        }
+
+
+        function handleSelectOSMElement(el, isShift) {
+            if (window.event) L.DomEvent.stopPropagation(window.event);
+
+            let layerVisible = false;
+            if (el.type === 'node' && showNodes) layerVisible = true;
+            else if (el.type === 'link' && showLinks) layerVisible = true;
+            else if (el.type === 'transitStop' && showTransitStops) layerVisible = true;
+            else if (el.type === 'transitRoute' && showTransitLines) layerVisible = true;
+
+            if (!layerVisible && currentDrawMode === 'select') {
+                 console.log(`Selection of ${el.type} ${el.id} blocked: Layer hidden.`);
+                 return;
+            }
+
+            if (currentDrawMode === 'addTransitLine' && (el.type === 'node' || el.type === 'transitRoute')) return;
+            handleSelectElement(el, isShift && (el.type !== 'transitStop' && el.type !== 'transitRoute'));
+        }
+
+        function addLink(fN, tN) { if (links.find(l => l.from === fN.id && l.to === tN.id)) { console.warn(`Link ${fN.id}->${tN.id} exists.`); return; } const newL = { id: `l${getNumericIdPart(fN.id)}-${getNumericIdPart(tN.id)}_${links.filter(lk => lk.from === fN.id && lk.to === tN.id).length}`, from: fN.id, to: tN.id, type: 'link', freespeed: 20.0, capacity: 3600.0, permlanes: 1.0, modes: "rail" }; if (currentBackgroundMode === 'osm' && fN.isOSM && tN.isOSM) { newL.isOSM = true; if (!fN.latlng || !tN.latlng) { console.error("OSM link error: node latlng missing."); return; } newL.length = fN.latlng.distanceTo(tN.latlng); const p = L.polyline([fN.latlng, tN.latlng], { color: 'rgba(50,50,50,0.7)', weight: 3 }).addTo(osmLinkLayerGroup).on('click', (e) => { L.DomEvent.stopPropagation(e); if (currentDrawMode === 'select') { handleSelectOSMElement(newL, e.originalEvent.shiftKey); } else if (currentDrawMode === 'addTransitLine') { addElementToManualRoute(newL, 'link'); } }); p._matsimLink = newL; const a = L.polylineDecorator(p, { patterns: [{ offset: '100%', repeat: 0, symbol: L.Symbol.arrowHead({ pixelSize: 15, polygon: false, pathOptions: { stroke: true, color: 'rgba(50,50,50,0.9)', fillOpacity: 1, weight: 1 }}) }] }).addTo(osmLinkLayerGroup); newL.leafletLayers = [p, a]; if (linkGlobalOffset !== 0) { updateSingleOsmLinkOffset(newL); } } else if (currentBackgroundMode !== 'osm' && !fN.isOSM && !tN.isOSM) { newL.isOSM = false; newL.length = calculateLinkLength(newL, nodes); redrawCanvasElements(); } else { console.warn(`Cannot create link: nodes OSM status mismatch or wrong BG mode.`); return; } links.push(newL); disableBackgroundSwitching(); }
+
+        function selectElementsInMarquee() {
+            const oldSelectedForMarquee = selectedElement;
+            deselectAll();
+
+            multipleSelectedElements = [];
+
+            if (currentBackgroundMode === 'osm' && leafletMap) {
+                const swS = L.point(Math.min(marqueeStart.x, marqueeEnd.x), Math.max(marqueeStart.y, marqueeEnd.y));
+                const neS = L.point(Math.max(marqueeStart.x, marqueeEnd.x), Math.min(marqueeStart.y, marqueeEnd.y));
+                try {
+                    const sw = leafletMap.containerPointToLatLng(swS);
+                    const ne = leafletMap.containerPointToLatLng(neS);
+                    const bds = L.latLngBounds(sw, ne);
+
+                    if (showNodes) {
+                        multipleSelectedElements.push(...nodes.filter(n => n.isOSM && n.latlng && bds.contains(n.latlng)));
+                    }
+                    if (showLinks) {
+                        multipleSelectedElements.push(...links.filter(l => {
+                            if (l.isOSM) {
+                                const fromNode = nodes.find(n => n.id === l.from);
+                                const toNode = nodes.find(n => n.id === l.to);
+                                
+                                return fromNode?.isOSM && fromNode.latlng && bds.contains(fromNode.latlng) &&
+                                       toNode?.isOSM && toNode.latlng && bds.contains(toNode.latlng);
+                            }
+                            return false;
+                        }));
+                    }
+                    if (showTransitStops) {
+                        multipleSelectedElements.push(...transitStops.filter(s => s.isOSM && s.latlng && bds.contains(s.latlng)));
+                    }
+                    if (showTransitLines) {
+                         multipleSelectedElements.push(...transitRoutes.filter(r => {
+                            if (r.isOSM) {
+                                let isInBounds = false;
+                                if (r.linkIds && r.linkIds.length > 0) {
+                                    for (const linkId of r.linkIds) {
+                                        const link = links.find(l_ => l_.id === linkId);
+                                        if (link) {
+                                            const fromNode = nodes.find(n => n.id === link.from);
+                                            const toNode = nodes.find(n => n.id === link.to);
+                                            if ((fromNode && fromNode.latlng && bds.contains(fromNode.latlng)) ||
+                                                (toNode && toNode.latlng && bds.contains(toNode.latlng))) {
+                                                isInBounds = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else if (r.stopProfiles && r.stopProfiles.length > 0) {
+                                    for (const sp of r.stopProfiles) {
+                                        const stop = transitStops.find(s => s.id === sp.stopId);
+                                        if (stop && stop.latlng && bds.contains(stop.latlng)) {
+                                            isInBounds = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                return isInBounds;
+                            }
+                            return false;
+                        }));
+                    }
+
+                    multipleSelectedElements = [...new Set(multipleSelectedElements)];
+
+                    multipleSelectedElements.forEach(el => {
+                        if (el.type === 'node' && el.leafletLayer) el.leafletLayer.setStyle({ fillColor: 'cyan', color: 'blue' });
+                        else if (el.type === 'link' && el.leafletLayers && el.leafletLayers[0]) el.leafletLayers.forEach(l => l.setStyle({ color: 'cyan', weight: 4 }));
+                        else if (el.type === 'transitStop' && el.leafletLayer) el.leafletLayer.setStyle({fillColor: 'cyan', color: 'blue', radius: TRANSIT_STOP_RADIUS_SCREEN +1});
+                        else if (el.type === 'transitRoute' && el.isOSM && showTransitLines) drawTransitRouteOSM(el);
+                    });
+
+                } catch (e) { console.error("OSM marquee error:", e); }
+            } else {
+                const mS = screenToCanvasMapCoords(marqueeStart.x, marqueeStart.y);
+                const mE = screenToCanvasMapCoords(marqueeEnd.x, marqueeEnd.y);
+                const rect = { minX: Math.min(mS.x, mE.x), minY: Math.min(mS.y, mE.y), maxX: Math.max(mS.x, mE.x), maxY: Math.max(mS.y, mE.y) };
+
+                if (showNodes) {
+                    multipleSelectedElements.push(...nodes.filter(n => !n.isOSM && n.x >= rect.minX && n.x <= rect.maxX && n.y >= rect.minY && n.y <= rect.maxY));
+                }
+                if (showLinks) {
+                    multipleSelectedElements.push(...links.filter(l => {
+                        if (l.isOSM) return false;
+                        const fromNode = nodes.find(n => n.id === l.from && !n.isOSM);
+                        const toNode = nodes.find(n => n.id === l.to && !n.isOSM);
+                        return fromNode && fromNode.x >= rect.minX && fromNode.x <= rect.maxX && fromNode.y >= rect.minY && fromNode.y <= rect.maxY &&
+                               toNode && toNode.x >= rect.minX && toNode.x <= rect.maxX && toNode.y >= rect.minY && toNode.y <= rect.maxY;
+                    }));
+                }
+                if (showTransitStops) {
+                    multipleSelectedElements.push(...transitStops.filter(s => {
+                        if (s.isOSM) return false;
+                        const nodeForStop = nodes.find(n => n.id === s.nodeId && !n.isOSM);
+                        return nodeForStop && nodeForStop.x >= rect.minX && nodeForStop.x <= rect.maxX && nodeForStop.y >= rect.minY && nodeForStop.y <= rect.maxY;
+                    }));
+                }
+                if (showTransitLines) {
+                    multipleSelectedElements.push(...transitRoutes.filter(r => {
+                         if (r.isOSM) return false;
+                          let isInBounds = false;
+                            if (r.linkIds && r.linkIds.length > 0) {
+                                for (const linkId of r.linkIds) {
+                                    const link = links.find(l_ => l_.id === linkId);
+                                    if (link) {
+                                        const fromNode = nodes.find(n => n.id === link.from);
+                                        const toNode = nodes.find(n => n.id === link.to);
+                                        if ((fromNode && fromNode.x >= rect.minX && fromNode.x <= rect.maxX && fromNode.y >= rect.minY && fromNode.y <= rect.maxY) ||
+                                            (toNode && toNode.x >= rect.minX && toNode.x <= rect.maxX && toNode.y >= rect.minY && toNode.y <= rect.maxY)) {
+                                            isInBounds = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            } else if (r.stopProfiles && r.stopProfiles.length > 0) {
+                                for (const sp of r.stopProfiles) {
+                                    const stop = transitStops.find(s_ => s_.id === sp.stopId);
+                                    if(stop){
+                                        const nodeForStop = nodes.find(n => n.id === stop.nodeId);
+                                        if (nodeForStop && nodeForStop.x >= rect.minX && nodeForStop.x <= rect.maxX && nodeForStop.y >= rect.minY && nodeForStop.y <= rect.maxY) {
+                                            isInBounds = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        return isInBounds;
+                    }));
+                }
+                multipleSelectedElements = [...new Set(multipleSelectedElements)];
+            }
+
+
+            if (multipleSelectedElements.length > 0) {
+                selectedElement = null;
+                hideLinkAttributeEditor(); hideTransitStopAttributeEditor(); hideTransitRouteAttributeEditor();
+            }
+            redrawCanvasElements();
+        }
+
+        function redrawCanvasElements() { if (currentBackgroundMode === 'osm' || canvas.classList.contains('hidden')) return; ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.save(); ctx.translate(panX, panY); ctx.scale(viewScale, viewScale); if (currentBackgroundMode === 'image' && backgroundImage) ctx.drawImage(backgroundImage, 0, 0, backgroundImage.width, backgroundImage.height); else if (currentBackgroundMode === 'none' || (currentBackgroundMode === 'image' && !backgroundImage)) drawGridCanvas(); if(showLinks){ links.forEach(l => { if (!l.isOSM) drawLinkCanvas(l, multipleSelectedElements.includes(l) || selectedElement === l || (currentDrawMode === 'addTransitLine' && currentManualRouteSequence.find(item => item.type === 'link' && item.id === l.id)) ); });} if(showNodes) { nodes.forEach(n => { if (!n.isOSM) drawNodeCanvas(n, multipleSelectedElements.includes(n) || selectedElement === n); }); } if (showTransitLines) { transitRoutes.forEach(tr => { if (!tr.isOSM) drawTransitRouteCanvas(tr, selectedElement === tr || multipleSelectedElements.includes(tr)); }); } if(showTransitStops) { transitStops.forEach(ts => { if (!ts.isOSM) drawTransitStopCanvas(ts, selectedElement === ts || multipleSelectedElements.includes(ts) || (currentDrawMode === 'addTransitLine' && currentManualRouteSequence.find(item => item.type === 'stop' && item.id === ts.id)) ); }); } if (isMarqueeSelecting) { ctx.restore(); ctx.beginPath(); ctx.rect(marqueeStart.x, marqueeStart.y, marqueeEnd.x - marqueeStart.x, marqueeEnd.y - marqueeStart.y); ctx.fillStyle = "rgba(0,100,255,0.2)"; ctx.fill(); ctx.strokeStyle = "rgba(0,100,255,0.6)"; ctx.lineWidth = 1; ctx.stroke(); ctx.save(); ctx.translate(panX, panY); ctx.scale(viewScale, viewScale); } ctx.restore(); }
+        function drawGridCanvas() { const gs=50; ctx.beginPath(); ctx.strokeStyle='#ddd'; ctx.lineWidth=1/viewScale; const ml=-panX/viewScale, mt=-panY/viewScale; const mr=(canvas.width-panX)/viewScale, mb=(canvas.height-panY)/viewScale; for (let x=Math.floor(ml/gs)*gs; x<mr; x+=gs) { ctx.moveTo(x,mt); ctx.lineTo(x,mb); } for (let y=Math.floor(mt/gs)*gs; y<mb; y+=gs) { ctx.moveTo(ml,y); ctx.lineTo(mr,y); } ctx.stroke(); }
+        function drawNodeCanvas(n,sel) { const isSel=sel||multipleSelectedElements.includes(n); ctx.beginPath(); const r=NODE_RADIUS_SCREEN/viewScale; ctx.arc(n.x,n.y,r,0,2*Math.PI); if(isSel){ctx.fillStyle='rgba(0,255,0,0.8)';ctx.strokeStyle='rgba(0,200,0,1)';} else if(firstNodeForLink&&firstNodeForLink.id===n.id){ctx.fillStyle='rgba(255,165,0,0.8)';ctx.strokeStyle='rgba(255,100,0,1)';} else{ctx.fillStyle='rgba(0,123,255,0.8)';ctx.strokeStyle='rgba(0,80,180,1)';} ctx.fill(); ctx.lineWidth=2/viewScale; ctx.stroke(); ctx.fillStyle='black'; ctx.textAlign='center'; ctx.textBaseline='bottom'; const fs=10/viewScale; ctx.font=`${fs}px Arial`; ctx.fillText(n.id,n.x,n.y-r-(2/viewScale)); }
+        
+        function drawLinkCanvas(l, sel) {
+            const isSel = sel || multipleSelectedElements.includes(l) || (currentDrawMode === 'addTransitLine' && currentManualRouteSequence.find(item => item.type === 'link' && item.id === l.id));
+            const fN = nodes.find(n => n.id === l.from && !n.isOSM);
+            const tN = nodes.find(n => n.id === l.to && !n.isOSM);
+            if (!fN || !tN) return;
+
+            let x1 = fN.x, y1 = fN.y, x2 = tN.x, y2 = tN.y;
+
+            if (linkGlobalOffset !== 0) {
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                if (len > 0) {
+                    const perpX = -dy / len; 
+                    const perpY = dx / len;
+                    const offsetVal = linkGlobalOffset / viewScale; 
+
+                    x1 += perpX * offsetVal;
+                    y1 += perpY * offsetVal;
+                    x2 += perpX * offsetVal;
+                    y2 += perpY * offsetVal;
+                }
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+
+            if (isSel && currentDrawMode === 'addTransitLine' && currentManualRouteSequence.find(item => item.type === 'link' && item.id === l.id)) {
+                ctx.strokeStyle = 'lime';
+                ctx.lineWidth = 5 / viewScale;
+            } else if (isSel) {
+                ctx.strokeStyle = 'rgba(255,0,0,0.9)';
+                ctx.lineWidth = 5 / viewScale;
+            } else {
+                ctx.strokeStyle = 'rgba(50,50,50,0.7)';
+                ctx.lineWidth = 3 / viewScale;
+            }
+            ctx.stroke();
+            drawArrowheadCanvas({ x: x1, y: y1 }, { x: x2, y: y2 }, isSel);
+        }
+
+        function drawArrowheadCanvas(offsetP1, offsetP2, isSelected) {
+            const headLengthMapUnits = (15 / viewScale); 
+            const nodeRadiusMapUnits = NODE_RADIUS_SCREEN / viewScale;
+
+            const dx = offsetP2.x - offsetP1.x;
+            const dy = offsetP2.y - offsetP1.y;
+            const angle = Math.atan2(dy, dx);
+            const lineLength = Math.sqrt(dx * dx + dy * dy);
+
+            if (lineLength < 0.1 / viewScale) return; 
+
+            let tipX, tipY;
+            const pullbackDistance = Math.min(nodeRadiusMapUnits, lineLength * 0.8); 
+            
+            tipX = offsetP2.x - pullbackDistance * Math.cos(angle);
+            tipY = offsetP2.y - pullbackDistance * Math.sin(angle);
+            
+            ctx.beginPath();
+            ctx.moveTo(tipX, tipY); 
+            ctx.lineTo(tipX - headLengthMapUnits * Math.cos(angle - Math.PI / 6), tipY - headLengthMapUnits * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(tipX - headLengthMapUnits * Math.cos(angle + Math.PI / 6), tipY - headLengthMapUnits * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fillStyle = isSelected ? 'rgba(255,0,0,0.9)' : 'rgba(50,50,50,0.9)';
+            ctx.fill();
+        }
+
+        function updateSingleOsmLinkOffset(link) { 
+            if (!leafletMap || !link.isOSM || !link.leafletLayers || !link.leafletLayers[0] || typeof link.leafletLayers[0].setLatLngs !== 'function') return;
+
+            const fromNode = nodes.find(n => n.id === link.from);
+            const toNode = nodes.find(n => n.id === link.to);
+
+            if (fromNode && toNode && fromNode.latlng && toNode.latlng) {
+                let newLatLngs;
+                if (linkGlobalOffset === 0) {
+                    newLatLngs = [fromNode.latlng, toNode.latlng];
+                } else {
+                    const p1 = leafletMap.latLngToContainerPoint(fromNode.latlng);
+                    const p2 = leafletMap.latLngToContainerPoint(toNode.latlng);
+
+                    const dx = p2.x - p1.x;
+                    const dy = p2.y - p1.y;
+                    const len = Math.sqrt(dx * dx + dy * dy);
+
+                    if (len === 0) {
+                        newLatLngs = [fromNode.latlng, toNode.latlng]; 
+                    } else {
+                        const perpX = -dy / len; 
+                        const perpY = dx / len;
+
+                        const p1_offset_x = p1.x + perpX * linkGlobalOffset;
+                        const p1_offset_y = p1.y + perpY * linkGlobalOffset;
+                        const p2_offset_x = p2.x + perpX * linkGlobalOffset;
+                        const p2_offset_y = p2.y + perpY * linkGlobalOffset;
+
+                        const latlng1_offset = leafletMap.containerPointToLatLng([p1_offset_x, p1_offset_y]);
+                        const latlng2_offset = leafletMap.containerPointToLatLng([p2_offset_x, p2_offset_y]);
+                        newLatLngs = [latlng1_offset, latlng2_offset];
+                    }
+                }
+                link.leafletLayers[0].setLatLngs(newLatLngs);
+                if (link.leafletLayers[1] && typeof link.leafletLayers[1].setPaths === 'function') {
+                    link.leafletLayers[1].setPaths(link.leafletLayers[0]); 
+                }
+            }
+        }
+        function updateAllOsmLinkOffsets() { 
+            if (!leafletMap || !osmLinkLayerGroup) return;
+            links.forEach(link => {
+                if (link.isOSM) {
+                    updateSingleOsmLinkOffset(link);
+                }
+            });
+        }
+
+
+        function parseAndLoadNetwork(xmlStr, srcCrs) {
+            console.log(`Parsing network, source CRS: ${srcCrs}`);
+            loadedNetworkCRS = srcCrs; 
+
+            if (srcCrs === 'CARTESIAN' && currentBackgroundMode !== 'none') {
+                switchBackgroundMode('none', true); 
+                alert("Switched to Blank Canvas background for Cartesian coordinate network load.");
+            } else if (srcCrs !== 'CARTESIAN' && currentBackgroundMode === 'none' && (srcCrs === 'EPSG:4326' || srcCrs === 'EPSG:2056' || srcCrs === 'PROJ_PIXELS')) {
+                switchBackgroundMode('osm', true); 
+                alert("Switched to OpenStreetMap background for georeferenced network load.");
+            } else {
+                 switchBackgroundMode(currentBackgroundMode, true); 
+            }
+
+
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlStr, "application/xml");
+            if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+                throw new Error("XML parsing error.");
+            }
+            const networkName = xmlDoc.documentElement.getAttribute("name") || "loaded_network";
+            const xmlNodes = xmlDoc.getElementsByTagName("node");
+            let maxNodeNumericId = 0;
+
+            for (let i = 0; i < xmlNodes.length; i++) {
+                const id = xmlNodes[i].getAttribute("id");
+                const x = parseFloat(xmlNodes[i].getAttribute("x"));
+                const y = parseFloat(xmlNodes[i].getAttribute("y"));
+                if (!id || isNaN(x) || isNaN(y)) continue;
+
+                let newNodeData = { id: id, type: 'node' };
+                const numId = getNumericIdPart(id);
+                if (numId > maxNodeNumericId) maxNodeNumericId = numId;
+
+                if (currentBackgroundMode === 'osm') {
+                    let latlng = null;
+                    if (srcCrs === "EPSG:4326") {
+                        latlng = L.latLng(y, x);
+                    } else if (srcCrs === "EPSG:2056" && typeof proj4 !== 'undefined' && proj4.defs["EPSG:2056"]) {
+                        try {
+                            const p = proj4("EPSG:2056", "EPSG:4326", [x, y]);
+                            latlng = L.latLng(p[1], p[0]);
+                        } catch (e) { console.error("Proj err for node " + id + ":", e); }
+                    } else if (srcCrs === "PROJ_PIXELS" && leafletMap) { 
+                        try {
+                             latlng = leafletMap.unproject([x,y]);
+                        } catch(e) { console.error("Leaflet unproject error for node " + id + ":", e); }
+                    } else if (srcCrs === "CARTESIAN") { 
+                         console.warn(`Node ${id} has Cartesian coords but loading on OSM. Interpreting as pixels.`);
+                         try {
+                             latlng = leafletMap.unproject([x,y]);
+                         } catch(e) { console.error("Leaflet unproject error for node " + id + ":", e); }
+                    }
+
+                    if (latlng) {
+                        const projected = leafletMap.project(latlng);
+                        newNodeData.x = projected.x;
+                        newNodeData.y = projected.y;
+                        newNodeData.isOSM = true;
+                        newNodeData.latlng = latlng;
+                        const m = L.circleMarker(latlng, { radius: NODE_RADIUS_SCREEN, color: '#007bff', fillColor: '#007bff', fillOpacity: 0.8, weight: 2 }).addTo(osmNodeLayerGroup);
+                        m.bindTooltip(newNodeData.id);
+                        m.on('click', (e) => { L.DomEvent.stopPropagation(e); if (currentDrawMode === 'addLinks') handleLinkClickOSM(newNodeData); else if (currentDrawMode === 'select') handleSelectOSMElement(newNodeData, e.originalEvent.shiftKey); else if (currentDrawMode === 'addTransitStop') addTransitStop(newNodeData); });
+                        newNodeData.leafletLayer = m;
+                        nodes.push(newNodeData);
+                    } else {
+                        console.warn(`Could not determine LatLng for OSM node ${id}. Skipping.`);
+                    }
+                } else { 
+                    newNodeData.x = x; 
+                    newNodeData.y = y;
+                    newNodeData.isOSM = false;
+                    nodes.push(newNodeData);
+                }
+            }
+            nextNodeId = maxNodeNumericId + 1;
+
+            const xmlLinks = xmlDoc.getElementsByTagName("link");
+            for (let i = 0; i < xmlLinks.length; i++) {
+                const fromId = xmlLinks[i].getAttribute("from");
+                const toId = xmlLinks[i].getAttribute("to");
+                const id = xmlLinks[i].getAttribute("id") || `l${fromId}-${toId}_${i}`;
+                const fN = nodes.find(n => n.id === fromId);
+                const tN = nodes.find(n => n.id === toId);
+                if (fN && tN) {
+                    const currentLinksLength = links.length;
+                    addLink(fN, tN); 
+                    if (links.length > currentLinksLength) {
+                        const newLink = links[links.length - 1];
+                        newLink.id = id;
+                        newLink.freespeed = parseFloat(xmlLinks[i].getAttribute("freespeed")) || newLink.freespeed;
+                        newLink.capacity = parseFloat(xmlLinks[i].getAttribute("capacity")) || newLink.capacity;
+                        newLink.permlanes = parseFloat(xmlLinks[i].getAttribute("permlanes")) || newLink.permlanes;
+                        newLink.modes = xmlLinks[i].getAttribute("modes") || newLink.modes;
+                        if (xmlLinks[i].hasAttribute("length")) newLink.length_override = parseFloat(xmlLinks[i].getAttribute("length"));
+                    }
+                }
+            }
+
+            if (currentBackgroundMode === 'osm' && osmNodeLayerGroup && osmNodeLayerGroup.getLayers().length > 0) {
+                leafletMap.fitBounds(osmNodeLayerGroup.getBounds(), { padding: [20, 20] });
+            } else if (currentBackgroundMode !== 'osm' && nodes.length > 0) {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                nodes.forEach(n => {
+                    if (n.x < minX) minX = n.x;
+                    if (n.y < minY) minY = n.y;
+                    if (n.x > maxX) maxX = n.x;
+                    if (n.y > maxY) maxY = n.y;
+                });
+                const dataWidth = maxX - minX;
+                const dataHeight = maxY - minY;
+                if (dataWidth > 0 || dataHeight > 0) { // Allow for 1D cases
+                    const scaleX = dataWidth > 0 ? canvas.width / (dataWidth + 20) : Infinity;
+                    const scaleY = dataHeight > 0 ? canvas.height / (dataHeight + 20) : Infinity;
+                    viewScale = Math.min(scaleX, scaleY) * 0.9; 
+                    if (!isFinite(viewScale)) viewScale = 1; // Handle case of single point or perfectly straight line
+                    panX = (canvas.width - dataWidth * viewScale) / 2 - minX * viewScale;
+                    panY = (canvas.height - dataHeight * viewScale) / 2 - minY * viewScale;
+                    viewScale = Math.max(MIN_VIEW_SCALE, Math.min(MAX_VIEW_SCALE, viewScale));
+                } else { // Single node or all nodes at same point
+                    viewScale = 1;
+                    panX = canvas.width/2 - nodes[0].x;
+                    panY = canvas.height/2 - nodes[0].y;
+                }
+                redrawCanvasElements();
+            }
+             if (linkGlobalOffset !== 0) { 
+                if(currentBackgroundMode === 'osm') updateAllOsmLinkOffsets();
+                else redrawCanvasElements();
+            }
+            updateExportCrsOptions();
+            alert(`Network "${networkName}" loaded: ${nodes.length} nodes, ${links.length} links.`);
+            disableBackgroundSwitching();
+        }
+
+        function generateAndDownloadXml(outputCrsKeyParam = "") {
+            if (nodes.length === 0 && links.length === 0) {
+                alert("No network data to export.");
+                return;
+            }
+
+            let effectiveOutputCrsKey = outputCrsKeyParam; // This is what the user selected from dropdown
+            let crsValueForAttribute; // This will be the short string for the XML attribute
+
+            if (effectiveOutputCrsKey === "wgs84") {
+                crsValueForAttribute = "EPSG:4326";
+            } else if (effectiveOutputCrsKey === "epsg2056") {
+                crsValueForAttribute = "EPSG:2056";
+            } else if (effectiveOutputCrsKey === "cartesian_canvas") {
+                crsValueForAttribute = "plaintext";
+            } else { // Auto mode (effectiveOutputCrsKey === "" or null)
+                if (currentBackgroundMode === 'osm') {
+                    if (loadedNetworkCRS === "EPSG:4326") {
+                        crsValueForAttribute = "EPSG:4326";
+                        effectiveOutputCrsKey = "wgs84"; // for coordinate transformation logic later
+                    } else if (loadedNetworkCRS === "EPSG:2056") {
+                        crsValueForAttribute = "EPSG:2056";
+                        effectiveOutputCrsKey = "epsg2056"; // for coordinate transformation logic later
+                    } else {
+                        crsValueForAttribute = "plaintext"; 
+                        effectiveOutputCrsKey = "internal_leaflet"; 
+                    }
+                } else { 
+                    crsValueForAttribute = "plaintext";
+                    effectiveOutputCrsKey = "cartesian_canvas";
+                }
+                console.log("Auto export CRS detected. Effective key for coord processing:", effectiveOutputCrsKey, "| XML attribute value:", crsValueForAttribute);
+            }
+            
+            if ((effectiveOutputCrsKey === "wgs84" || effectiveOutputCrsKey === "epsg2056") && typeof proj4 === 'undefined') {
+                alert("Proj4js not loaded. Cannot transform. Exporting in current system (Leaflet/Canvas pixels) as 'plaintext'.");
+                crsValueForAttribute = "plaintext";
+                effectiveOutputCrsKey = (currentBackgroundMode === 'none' || currentBackgroundMode === 'image') ? "cartesian_canvas" : "internal_leaflet";
+            }
+
+
+            let tempNodesPlain = nodes.map(n => ({
+                id: n.id,
+                x: n.x,
+                y: n.y,
+                isOSM: n.isOSM,
+                latlng: (n.isOSM && n.latlng) ? { lat: n.latlng.lat, lng: n.latlng.lng } : null
+            }));
+
+            let tempLinksPlain = links.map(l => ({
+                id: l.id, from: l.from, to: l.to,
+                length_override: l.length_override, freespeed: l.freespeed,
+                capacity: l.capacity, permlanes: l.permlanes, modes: l.modes,
+                isOSM: l.isOSM, calculated_length: 0
+            }));
+
+            let crsDescriptionForComment = "";
+            let crsNote = "";
+
+            if (effectiveOutputCrsKey === "wgs84") {
+                crsDescriptionForComment = "EPSG:4326 WGS84 Geographic";
+                crsNote = `<!-- Node X=Longitude, Y=Latitude. Link lengths calculated by Haversine formula (meters). CRS in attribute: ${crsValueForAttribute}. -->`;
+                tempNodesPlain.forEach(node => {
+                    if (node.isOSM && node.latlng) {
+                        node.x = node.latlng.lng;
+                        node.y = node.latlng.lat;
+                    } else if (!node.isOSM) {
+                        console.warn(`Node ${node.id} (non-OSM) exported as WGS84 using internal canvas/image coords - likely incorrect without georeferencing step.`);
+                    }
+                });
+            } else if (effectiveOutputCrsKey === "epsg2056") {
+                crsDescriptionForComment = "EPSG:2056 CH1903+ / LV95";
+                crsNote = `<!-- Node X=Easting, Y=Northing (Swiss LV95 meters). Link lengths calculated by Euclidean distance (meters). CRS in attribute: ${crsValueForAttribute}. -->`;
+                tempNodesPlain.forEach(node => {
+                    if (node.isOSM && node.latlng) {
+                        try {
+                            const p = proj4("EPSG:4326", "EPSG:2056", [node.latlng.lng, node.latlng.lat]);
+                            node.x = p[0];
+                            node.y = p[1];
+                        } catch (e) { console.error(`Error projecting node ${node.id} to EPSG:2056:`, e.message); }
+                    } else if (!node.isOSM) {
+                         console.warn(`Node ${node.id} (non-OSM) exported as EPSG:2056 using internal canvas/image coords - likely incorrect without georeferencing step.`);
+                    }
+                });
+            } else if (effectiveOutputCrsKey === "cartesian_canvas") {
+                 if (loadedNetworkCRS === 'CARTESIAN' && (currentBackgroundMode === 'none' || currentBackgroundMode === 'image') ) {
+                    crsDescriptionForComment = "Mathematical / Cartesian (Original Loaded Units if applicable, else Canvas/Image Units)";
+                } else if (currentBackgroundMode === 'none') {
+                    crsDescriptionForComment = "Mathematical / Cartesian (Current Canvas Units)";
+                } else if (currentBackgroundMode === 'image') {
+                    crsDescriptionForComment = "Mathematical / Cartesian (Image Pixel Units)";
+                } else { 
+                    crsDescriptionForComment = "Mathematical / Cartesian (Interpreted from Leaflet Projected Pixels)";
+                }
+                crsNote = `<!-- Node X/Y values are based on the system described: ${crsDescriptionForComment}. Link lengths calculated by Euclidean distance. CRS in attribute: ${crsValueForAttribute}. -->`;
+            } else { 
+                crsDescriptionForComment = "Internal Leaflet World CRS Pixels (EPSG:3857 based, scaled at current zoom)";
+                 if (loadedNetworkCRS && loadedNetworkCRS !== 'PROJ_PIXELS' && loadedNetworkCRS !== 'CARTESIAN' ) {
+                    crsDescriptionForComment += ` (Originally loaded as ${loadedNetworkCRS})`;
+                }
+                crsNote = `<!-- Node X/Y values are Leaflet internal projected pixels. Not georeferenced for other tools. Link lengths by Euclidean distance on these pixel values. CRS in attribute: ${crsValueForAttribute}. -->`;
+            }
+
+
+            tempLinksPlain.forEach(link => {
+                const fromNode = tempNodesPlain.find(n => n.id === link.from);
+                const toNode = tempNodesPlain.find(n => n.id === link.to);
+                if (!fromNode || !toNode) {
+                    link.calculated_length = 0;
+                    return;
+                }
+                if (effectiveOutputCrsKey === "wgs84") {
+                    const oFrom = nodes.find(n => n.id === link.from); 
+                    const oTo = nodes.find(n => n.id === link.to);
+                    if (oFrom && oTo && oFrom.latlng && oTo.latlng) {
+                        link.calculated_length = L.latLng(oFrom.latlng.lat, oFrom.latlng.lng).distanceTo(L.latLng(oTo.latlng.lat, oTo.latlng.lng));
+                    } else { 
+                        link.calculated_length = Math.sqrt(Math.pow(toNode.x - fromNode.x, 2) + Math.pow(toNode.y - fromNode.y, 2));
+                    }
+                } else { 
+                    link.calculated_length = Math.sqrt(Math.pow(toNode.x - fromNode.x, 2) + Math.pow(toNode.y - fromNode.y, 2));
+                }
+            });
+
+            let xmlString = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE network SYSTEM "http://www.matsim.org/files/dtd/network_v2.dtd">\n<network name="drawn_network">\n\n\t<attributes>\n\t\t<attribute name="coordinateReferenceSystem" class="java.lang.String">${crsValueForAttribute}</attribute>\n\t</attributes>\n    ${crsNote}\n\n\t<nodes>\n`;
+            tempNodesPlain.forEach(node => {
+                const precX = (effectiveOutputCrsKey === 'wgs84') ? 6 : (effectiveOutputCrsKey === 'epsg2056' ? 1 : 2);
+                const precY = (effectiveOutputCrsKey === 'wgs84') ? 6 : (effectiveOutputCrsKey === 'epsg2056' ? 1 : 2);
+                xmlString += `\t\t<node id="${node.id}" x="${parseFloat(node.x).toFixed(precX)}" y="${parseFloat(node.y).toFixed(precY)}"/>\n`;
+            });
+            xmlString += `\t</nodes>\n\t<!-- ====================================================================== -->\n\t<links capperiod="01:00:00">\n`;
+            tempLinksPlain.forEach(link => {
+                const len = (typeof link.length_override === 'number') ? link.length_override : link.calculated_length;
+                xmlString += `\t\t<link id="${link.id}" from="${link.from}" to="${link.to}" length="${parseFloat(len || 0).toFixed(1)}" freespeed="${(parseFloat(link.freespeed) || 20.0).toFixed(1)}" capacity="${(parseFloat(link.capacity) || 3600.0).toFixed(1)}" permlanes="${(parseFloat(link.permlanes) || 1.0).toFixed(1)}" oneway="1" modes="${link.modes || 'rail'}"/>\n`;
+            });
+            xmlString += `\t</links>\n\t<!-- ====================================================================== -->\n</network>`;
+            const blob = new Blob([xmlString], { type: 'application/xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'network.xml';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            console.log("Network XML downloaded. CRS in attribute:", crsValueForAttribute, "Effective processing key:", effectiveOutputCrsKey);
+        }
+
+
+        // --- Transit Specific Functions ---
+        function addTransitStop(node) { if (!node) return; const newId = `ts${nextTransitStopId++}`; const incLinks = getIncidentLinks(node.id); const defLinkRef = incLinks.length > 0 ? incLinks[0].id : null; const newStop = { id: newId, nodeId: node.id, name: `Stop@${node.id}`, x: node.x, y: node.y, linkRefId: defLinkRef, stopAreaId: "", isOSM: node.isOSM, latlng: node.isOSM && node.latlng ? L.latLng(node.latlng.lat, node.latlng.lng) : null, type: 'transitStop' }; transitStops.push(newStop); if (newStop.isOSM) { if (!osmTransitStopLayerGroup) { osmTransitStopLayerGroup = L.featureGroup().addTo(leafletMap); } const m = L.circleMarker(newStop.latlng, { radius: TRANSIT_STOP_RADIUS_SCREEN, color: 'purple', fillColor: 'purple', fillOpacity: 0.7, weight: 1.5 }).addTo(osmTransitStopLayerGroup); m.bindTooltip(`${newStop.id}(${newStop.name})`); m.on('click', (e) => { L.DomEvent.stopPropagation(e); if (currentDrawMode === 'select') handleSelectOSMElement(newStop, e.originalEvent.shiftKey); else if (currentDrawMode === 'addTransitLine') addElementToManualRoute(newStop, 'stop'); }); newStop.leafletLayer = m; } else { redrawCanvasElements(); } disableBackgroundSwitching(); return newStop; 
+        }
+        function findTransitStopAtScreenCanvas(sX, sY) { for (let i = transitStops.length-1; i>=0; i--) { const s = transitStops[i]; if (s.isOSM) continue; const nS = nodes.find(n=>n.id===s.nodeId && !n.isOSM); if (!nS) continue; const sPos = canvasMapToScreenCoords(nS.x, nS.y); const d = Math.sqrt((sX-sPos.x)**2 + (sY-sPos.y)**2); if (d < (TRANSIT_STOP_CLICK_RADIUS_SCREEN/viewScale)) return s; } return null; }
+        function drawTransitStopCanvas(stop, sel) { const nS=nodes.find(n=>n.id===stop.nodeId && !n.isOSM); if(!nS) return; ctx.beginPath(); const r= sel && currentDrawMode === 'addTransitLine' && currentManualRouteSequence.find(item => item.type === 'stop' && item.id === stop.id) ? (TRANSIT_STOP_RADIUS_SCREEN + 2)/viewScale : TRANSIT_STOP_RADIUS_SCREEN/viewScale; ctx.arc(nS.x,nS.y,r,0,2*Math.PI); ctx.fillStyle= sel && currentDrawMode === 'addTransitLine' && currentManualRouteSequence.find(item => item.type === 'stop' && item.id === stop.id) ? 'lime' : (sel?'rgba(255,255,0,0.9)':'rgba(128,0,128,0.8)'); ctx.strokeStyle=sel?'rgba(255,165,0,1)':'rgba(80,0,80,1)'; ctx.fill();ctx.lineWidth=1.5/viewScale;ctx.stroke(); }
+        function showTransitStopAttributeEditor(stop) { if (!stop || stop.type !== 'transitStop') return; selectedElement = stop; tsAttrIdInput.value = stop.id; tsAttrNameInput.value = stop.name || ""; tsAttrNodeIdInput.value = stop.nodeId; tsAttrLinkRefIdInput.value = stop.linkRefId || ""; tsAttrStopAreaIdInput.value = stop.stopAreaId || ""; const incLinks = getIncidentLinks(stop.nodeId); if (incLinks.length > 0) { tsAttrLinkRefIdSelectContainer.classList.remove('hidden'); tsAttrLinkRefIdTextInputContainer.querySelector('label').textContent = "LinkRef(man):"; tsAttrLinkRefIdSelect.innerHTML = `<option value="">--Pick Link--</option>`; incLinks.forEach(l => { const opt=document.createElement('option'); opt.value=l.id; opt.textContent=`${l.id}(${l.from}->${l.to})`; if(l.id===stop.linkRefId)opt.selected=true; tsAttrLinkRefIdSelect.appendChild(opt); }); tsAttrLinkRefIdSelect.onchange=()=>{tsAttrLinkRefIdInput.value=tsAttrLinkRefIdSelect.value;}; } else { tsAttrLinkRefIdSelectContainer.classList.add('hidden'); tsAttrLinkRefIdTextInputContainer.querySelector('label').textContent = "Link Ref ID:"; tsAttrLinkRefIdSelect.innerHTML=''; } transitStopAttributeEditorPanel.classList.remove('hidden'); linkAttributeEditorPanel.classList.add('hidden'); transitRouteAttributeEditorPanel.classList.add('hidden'); }
+        function hideTransitStopAttributeEditor() { transitStopAttributeEditorPanel.classList.add('hidden'); }
+        function applyTransitStopChanges() { if (!selectedElement || selectedElement.type !== 'transitStop') return; const s=selectedElement; s.name=tsAttrNameInput.value.trim(); s.linkRefId=tsAttrLinkRefIdInput.value.trim()||null; s.stopAreaId=tsAttrStopAreaIdInput.value.trim(); if(s.isOSM&&s.leafletLayer){s.leafletLayer.unbindTooltip().bindTooltip(`${s.id}(${s.name})`);} if(currentBackgroundMode!=='osm')redrawCanvasElements(); alert(`T.Stop ${s.id} updated.`); }
+        function addElementToManualRoute(element, type) { const lastElement = currentManualRouteSequence.length > 0 ? currentManualRouteSequence[currentManualRouteSequence.length - 1] : null; if (type === 'stop') { if (lastElement && lastElement.type === 'stop') { alert("Add links between stops."); return; } if (currentManualRouteSequence.find(item => item.type === 'stop' && item.id === element.id)) { alert("Stop already in sequence."); return; } currentManualRouteSequence.push({ type: 'stop', id: element.id, nodeId: element.nodeId }); } else if (type === 'link') { if (!lastElement) { alert("Start a line with a stop."); return; } let expectedFromNodeId = null; if (lastElement.type === 'stop') { expectedFromNodeId = lastElement.nodeId; } else if (lastElement.type === 'link') { const prevLinkObj = links.find(l => l.id === lastElement.id); if(prevLinkObj) expectedFromNodeId = prevLinkObj.to; } if (expectedFromNodeId !== element.from) { alert(`Link ${element.id} (from ${element.from}) does not connect from previous element (expected from ${expectedFromNodeId}).`); return; } currentManualRouteSequence.push({ type: 'link', id: element.id }); } finalizeTransitLineBtn.classList.toggle('hidden', currentManualRouteSequence.length < 3 || currentManualRouteSequence[0].type !== 'stop' || currentManualRouteSequence[currentManualRouteSequence.length-1].type !== 'stop' || !currentManualRouteSequence.some(item => item.type === 'link')); if (element.isOSM) { if (type === 'stop' && element.leafletLayer) element.leafletLayer.setStyle({ fillColor: 'lime', color: 'green', radius: TRANSIT_STOP_RADIUS_SCREEN + 1 }); else if (type === 'link' && element.leafletLayers) { element.leafletLayers.forEach(l => l.setStyle({ color: 'lime', weight: 5})); } } else { redrawCanvasElements(); } console.log("Route sequence:", currentManualRouteSequence.map(item => `${item.type}:${item.id}`).join(" -> ")); }
+        function finalizeCurrentTransitLine() { if (currentManualRouteSequence.length < 3 || currentManualRouteSequence[0].type !== 'stop' || currentManualRouteSequence[currentManualRouteSequence.length - 1].type !== 'stop' || !currentManualRouteSequence.some(item => item.type === 'link')) { alert("A line must start/end with a stop and include at least one link."); return; } const lineId = `tl${nextTransitLineId++}`; const routeId = `tr${nextTransitRouteId++}`; const isOSMRoute = currentManualRouteSequence.some(item => { const el = (item.type==='stop'?transitStops:links).find(e=>e.id===item.id); return el && el.isOSM; }); const newRoute = { id: routeId, lineId: lineId, name: `Route for ${lineId}`, transportMode: "rail", stopProfiles: [], linkIds: [], departures: [], isOSM: isOSMRoute, type: 'transitRoute' }; let currentStopIndex = 0; currentManualRouteSequence.forEach(item => { if (item.type === 'stop') { newRoute.stopProfiles.push({ stopId: item.id, nodeId: item.nodeId, arrivalOffset: currentStopIndex === 0 ? "00:00:00" : `00:${String(currentStopIndex * 5).padStart(2, '0')}:00`, departureOffset: `00:${String(currentStopIndex * 5).padStart(2, '0')}:00`, awaitDeparture: true }); currentStopIndex++; } else if (item.type === 'link') { newRoute.linkIds.push(item.id); } }); if (newRoute.stopProfiles.length < 2) { alert("Route needs >= 2 stops."); cancelCurrentTransitLine(); return;} const defaultVehicleTypeId = defaultVehicleTypes.find(vt => vt.networkMode === newRoute.transportMode)?.id || defaultVehicleTypes[0].id; const vehicleId = `veh_${defaultVehicleTypeId}_${vehicleIdCounter++}`; if (!definedVehicles.find(v => v.id === vehicleId)) { definedVehicles.push({ id: vehicleId, typeId: defaultVehicleTypeId}); } newRoute.departures.push({ id: `dep${nextDepartureId++}`, time: "08:00:00", vehicleRefId: vehicleId }); transitRoutes.push(newRoute); transitLines.push({ id: lineId, name: `Line ${lineId}`, routeIds: [routeId], type: 'transitLine' }); console.log("Finalized T.Line (manual):", lineId, "Route:", newRoute); if (newRoute.isOSM && showTransitLines) { drawTransitRouteOSM(newRoute); } else if (!newRoute.isOSM && showTransitLines) { redrawCanvasElements(); } cancelCurrentTransitLine(); setDrawMode('select'); alert(`T.Line ${lineId} (manual) & Route ${routeId} created.`); disableBackgroundSwitching(); }
+        function cancelCurrentTransitLine() { currentManualRouteSequence.forEach(item => { if(item.type === 'stop') { const s = transitStops.find(stop => stop.id === item.id); if (s && s.isOSM && s.leafletLayer) s.leafletLayer.setStyle({fillColor: 'purple', color: 'purple', radius: TRANSIT_STOP_RADIUS_SCREEN}); } else if(item.type === 'link') { const l = links.find(link => link.id === item.id); if (l && l.isOSM && l.leafletLayers) { updateSingleOsmLinkOffset(l); l.leafletLayers.forEach(ll => ll.setStyle({color: 'rgba(50,50,50,0.7)', weight: 3}));}} }); currentManualRouteSequence = []; finalizeTransitLineBtn.classList.add('hidden'); cancelTransitLineBtn.classList.add('hidden'); if (currentBackgroundMode !== 'osm') redrawCanvasElements(); console.log("Manual T.Line creation cancelled."); }
+
+        function drawTransitRouteOSM(route) {
+            if (!route.isOSM || !osmTransitRouteLayerGroup) return;
+
+            if (route.leafletLayers) {
+                route.leafletLayers.forEach(l => osmTransitRouteLayerGroup.removeLayer(l));
+                route.leafletLayers = [];
+            } else {
+                route.leafletLayers = [];
+            }
+
+            const latlngs = [];
+            if (route.linkIds && route.linkIds.length > 0) {
+                const firstLink = links.find(l => l.id === route.linkIds[0] && l.isOSM);
+                if (firstLink) {
+                    const firstNode = nodes.find(n => n.id === firstLink.from && n.isOSM);
+                    if (firstNode && firstNode.latlng) {
+                         latlngs.push(firstNode.latlng);
+                    }
+                }
+                route.linkIds.forEach(linkId => {
+                    const link = links.find(li => li.id === linkId && li.isOSM);
+                    if (link) {
+                        const toNode = nodes.find(n => n.id === link.to && n.isOSM);
+                        if (toNode && toNode.latlng) latlngs.push(toNode.latlng);
+                    }
+                });
+            } else { 
+                route.stopProfiles.forEach(sp => {
+                    const stop = transitStops.find(st => st.id === sp.stopId && st.isOSM);
+                    if (stop && stop.latlng) latlngs.push(stop.latlng);
+                });
+            }
+            
+            if (latlngs.length < route.stopProfiles.length && route.stopProfiles.length >=2) {
+                 latlngs.length = 0; 
+                 route.stopProfiles.forEach(sp => {
+                    const stop = transitStops.find(st => st.id === sp.stopId && st.isOSM);
+                    if (stop && stop.latlng) latlngs.push(stop.latlng);
+                });
+            }
+
+
+            if (latlngs.length < 2) return;
+
+            const isSelected = selectedElement === route || multipleSelectedElements.includes(route);
+            const col = isSelected ? 'cyan' : 'magenta';
+            const wt = isSelected ? 6 : 4;
+
+            const polyline = L.polyline(latlngs, { color: col, weight: wt, opacity: 0.8 });
+             if (showTransitLines && osmTransitRouteLayerGroup && !osmTransitRouteLayerGroup.hasLayer(polyline)) {
+                polyline.addTo(osmTransitRouteLayerGroup);
+            }
+
+            polyline.on('click', (e) => {
+                L.DomEvent.stopPropagation(e);
+                if (currentDrawMode === 'select') {
+                    handleSelectOSMElement(route, e.originalEvent.shiftKey);
+                }
+            });
+            route.leafletLayers.push(polyline);
+        }
+
+        function drawTransitRouteCanvas(route, sel) { if (route.isOSM || !showTransitLines) return; if ((!route.linkIds || route.linkIds.length === 0) && route.stopProfiles.length < 2) return; const coords = []; if (route.linkIds && route.linkIds.length > 0) { const fL = links.find(l => l.id === route.linkIds[0] && !l.isOSM); if (fL) { const fN = nodes.find(n => n.id === fL.from && !n.isOSM); if (fN) coords.push({x: fN.x, y: fN.y});} route.linkIds.forEach(lId => { const l = links.find(li => li.id === lId && !li.isOSM); if (l) { const tN = nodes.find(n => n.id === l.to && !n.isOSM); if (tN) coords.push({x: tN.x, y: tN.y});} }); } else { route.stopProfiles.forEach(sp => { const s = transitStops.find(st => st.id === sp.stopId && !st.isOSM); if(s){ const nS = nodes.find(n => n.id === s.nodeId && !n.isOSM); if(nS) coords.push({ x: nS.x, y: nS.y });} }); } if (coords.length < 2) return; ctx.beginPath(); ctx.moveTo(coords[0].x, coords[0].y); for (let i = 1; i < coords.length; i++) { ctx.lineTo(coords[i].x, coords[i].y); } ctx.strokeStyle = sel ? 'rgba(0,255,255,0.9)' : 'rgba(255,0,255,0.7)'; ctx.lineWidth = sel ? (6/viewScale) : (4/viewScale); ctx.stroke(); }
+        function findTransitRouteAtScreenCanvas(sX,sY) { if (!showTransitLines) return null; const c = screenToCanvasMapCoords(sX,sY); const tol = TRANSIT_ROUTE_CLICK_TOLERANCE/viewScale; for (const r of transitRoutes.filter(rt => !rt.isOSM && rt.linkIds && rt.linkIds.length > 0)) { let pNCoords = null; const fL = links.find(l => l.id === r.linkIds[0] && !l.isOSM); if (fL) { const fN = nodes.find(n => n.id === fL.from && !n.isOSM); if (fN) pNCoords = {x:fN.x, y:fN.y}; } for (const lId of r.linkIds) { const l = links.find(li => li.id === lId && !li.isOSM); if (!l || !pNCoords) continue; const tN = nodes.find(n => n.id === l.to && !n.isOSM); if (!tN) continue; const p1=pNCoords; const p2={x:tN.x, y:tN.y}; const dx=p2.x-p1.x; const dy=p2.y-p1.y; const lenSq=dx*dx+dy*dy; if(lenSq===0){ if(Math.sqrt(Math.pow(c.x-p1.x,2)+Math.pow(c.y-p1.y,2))<=tol)return r; }else{ let t=((c.x-p1.x)*dx+(c.y-p1.y)*dy)/lenSq; t=Math.max(0,Math.min(1,t)); const cX=p1.x+t*dx; const cY=p1.y+t*dy; if(Math.sqrt(Math.pow(c.x-cX,2)+Math.pow(c.y-cY,2))<=tol)return r; } pNCoords=p2; } } return null; }
+        function showTransitRouteAttributeEditor(route) { if (!route || route.type !== 'transitRoute') return; selectedElement = route; trAttrIdInput.value = route.id; trAttrLineIdInput.value = route.lineId; trAttrNameInput.value = route.name || ""; trAttrTransportModeSelect.value = route.transportMode; trAttrStopsListSpan.textContent = route.stopProfiles.map(sp => sp.stopId).join(', '); const linksText = route.linkIds ? route.linkIds.join(', ') : "No links"; trAttrLinksListSpan.textContent = linksText.length > 30 ? linksText.substring(0,27) + '...' : linksText; trAttrLinksListSpan.title = linksText; trDeparturesTableBody.innerHTML = ''; route.departures.forEach(dep => addDepartureRowToTable(dep, route)); trStopProfileTableBody.innerHTML = ''; route.stopProfiles.forEach(sp => { const row = trStopProfileTableBody.insertRow(); row.insertCell().textContent = sp.stopId; const arrivalCell = row.insertCell(); const arrivalInput = document.createElement('input'); arrivalInput.type = 'text'; arrivalInput.value = sp.arrivalOffset; arrivalInput.dataset.stopId = sp.stopId; arrivalInput.dataset.field = 'arrivalOffset'; arrivalInput.style.width="70px"; arrivalCell.appendChild(arrivalInput); const departureCell = row.insertCell(); const departureInput = document.createElement('input'); departureInput.type = 'text'; departureInput.value = sp.departureOffset; departureInput.dataset.stopId = sp.stopId; departureInput.dataset.field = 'departureOffset'; departureInput.style.width="70px"; departureCell.appendChild(departureInput); const awaitCell = row.insertCell(); const awaitCheckbox = document.createElement('input'); awaitCheckbox.type = 'checkbox'; awaitCheckbox.checked = sp.awaitDeparture; awaitCheckbox.dataset.stopId = sp.stopId; awaitCheckbox.dataset.field = 'awaitDeparture'; awaitCell.appendChild(awaitCheckbox); }); transitRouteAttributeEditorPanel.classList.remove('hidden'); linkAttributeEditorPanel.classList.add('hidden'); transitStopAttributeEditorPanel.classList.add('hidden'); }
+        function addDepartureRowToTable(dep, route) { const r = trDeparturesTableBody.insertRow(); r.insertCell().textContent = dep.id; const tc = r.insertCell(); const ti = document.createElement('input'); ti.type='text'; ti.value=dep.time; ti.placeholder="HH:MM:SS"; ti.style.width="70px"; tc.appendChild(ti); const vc = r.insertCell(); const vi = document.createElement('input'); vi.type='text'; vi.value=dep.vehicleRefId; vi.style.width="90px"; vc.appendChild(vi); const ac = r.insertCell(); const db = document.createElement('button'); db.textContent='X'; db.title="Del Dep"; db.classList.add('danger'); db.style.padding="1px 3px"; db.style.fontSize="0.7em"; db.onclick=()=>{ route.departures=route.departures.filter(d=>d.id!==dep.id); if(!transitRoutes.some(r_=>r_.departures.some(d_=>d_.vehicleRefId===dep.vehicleRefId))){definedVehicles=definedVehicles.filter(v=>v.id!==dep.vehicleRefId);} showTransitRouteAttributeEditor(route); }; ac.appendChild(db); }
+        function hideTransitRouteAttributeEditor() { transitRouteAttributeEditorPanel.classList.add('hidden'); }
+        function addDepartureToRouteEditor() { if (!selectedElement || selectedElement.type !== 'transitRoute') return; const r = selectedElement; const selVehTypeId = trDefaultVehicleTypeSelect.value; let vId = `veh_${selVehTypeId}_${vehicleIdCounter++}`; while(definedVehicles.find(v => v.id === vId)) { vId = `veh_${selVehTypeId}_${vehicleIdCounter++}`; } if (!definedVehicles.find(v => v.id === vId)) { definedVehicles.push({id: vId, typeId: selVehTypeId }); } const newDep = { id: `dep${nextDepartureId++}`, time: r.departures.length > 0 ? incrementTime(r.departures[r.departures.length-1].time, 10) : "08:00:00", vehicleRefId: vId }; r.departures.push(newDep); addDepartureRowToTable(newDep, r); }
+        function incrementTime(timeStr, minsToAdd) { if (!timeStr||!timeStr.includes(':')) timeStr="00:00:00"; const p=timeStr.split(':'); let h=parseInt(p[0])||0; let m=parseInt(p[1])||0; let s=parseInt(p[2])||0; m+=minsToAdd; h+=Math.floor(m/60); m%=60; h%=24; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; }
+        function applyTransitRouteChanges() { if (!selectedElement||selectedElement.type!=='transitRoute') return; const r=selectedElement; r.lineId=trAttrLineIdInput.value.trim(); r.name=trAttrNameInput.value.trim(); r.transportMode=trAttrTransportModeSelect.value; const newDeps=[]; for(let i=0;i<trDeparturesTableBody.rows.length;i++){ const row=trDeparturesTableBody.rows[i]; const dId=row.cells[0].textContent; const t=row.cells[1].querySelector('input').value; const vRefId=row.cells[2].querySelector('input').value; newDeps.push({id:dId,time:t,vehicleRefId:vRefId}); if(!definedVehicles.find(v=>v.id===vRefId)){const typeId=defaultVehicleTypes.find(vt=>vt.networkMode===r.transportMode)?.id||defaultVehicleTypes[0].id; definedVehicles.push({id:vRefId,typeId:typeId}); console.warn(`Veh ${vRefId} added to definedVehs, type ${typeId}.`);}} r.departures=newDeps; for(let i=0;i<trStopProfileTableBody.rows.length;i++){ const row=trStopProfileTableBody.rows[i]; const sId=row.cells[0].textContent; const prof=r.stopProfiles.find(sp=>sp.stopId===sId); if(prof){prof.arrivalOffset=row.cells[1].querySelector('input').value; prof.departureOffset=row.cells[2].querySelector('input').value; prof.awaitDeparture=row.cells[3].querySelector('input').checked;}} if(r.isOSM && showTransitLines){drawTransitRouteOSM(r);}else if (!r.isOSM && showTransitLines){redrawCanvasElements();} alert(`T.Route ${r.id} updated.`); }
+        function recalculateRouteLinksInternal(route, nodeSeq=null) { if (!route) return; const nodeSeqForPath = nodeSeq || route.stopProfiles.map(sp => sp.nodeId); if (nodeSeqForPath.length < 2) { route.linkIds = []; if (route.isOSM && route.leafletLayers) { route.leafletLayers.forEach(l=>osmTransitRouteLayerGroup.removeLayer(l)); route.leafletLayers = [];} return; } let allPathLinks = []; let pathFound = true; for (let i = 0; i < nodeSeqForPath.length - 1; i++) { const fromId = nodeSeqForPath[i]; const toId = nodeSeqForPath[i+1]; if (fromId === toId) continue; const seg = findShortestPath(fromId, toId, nodes, links); if (seg !== null && seg.length > 0) { allPathLinks.push(...seg); } else if ((seg === null || seg.length === 0) && fromId !== toId) { console.warn(`No path: ${fromId}->${toId} for T.Route ${route.id}.`); pathFound = false; break; } } route.linkIds = pathFound ? allPathLinks : null; if (route.isOSM && showTransitLines) drawTransitRouteOSM(route); else if (!route.isOSM && showTransitLines) redrawCanvasElements(); }
+        
+        function deleteSelectedTransitRoute() {
+            if (!selectedElement || selectedElement.type !== 'transitRoute') {
+                alert("No T.Route selected.");
+                return;
+            }
+            if (!confirm(`Delete T.Route ${selectedElement.id}?`)) return;
+
+            const rDel = selectedElement;
+
+            if (rDel.isOSM && rDel.leafletLayers && osmTransitRouteLayerGroup) {
+                rDel.leafletLayers.forEach(l => {
+                    if (osmTransitRouteLayerGroup.hasLayer(l)) {
+                        osmTransitRouteLayerGroup.removeLayer(l);
+                    }
+                });
+            }
+            rDel.leafletLayers = []; 
+
+            transitRoutes = transitRoutes.filter(r => r.id !== rDel.id);
+
+            const pLine = transitLines.find(l => l.id === rDel.lineId);
+            if (pLine) {
+                pLine.routeIds = pLine.routeIds.filter(rId => rId !== rDel.id);
+                if (pLine.routeIds.length === 0) {
+                    transitLines = transitLines.filter(l => l.id !== pLine.id);
+                    console.log(`Line ${pLine.id} deleted (no routes).`);
+                }
+            }
+
+            rDel.departures.forEach(dep => {
+                if (!transitRoutes.some(r => r.departures.some(d => d.vehicleRefId === dep.vehicleRefId))) {
+                    definedVehicles = definedVehicles.filter(v => v.id !== dep.vehicleRefId);
+                }
+            });
+
+            deselectAll(); 
+            if (currentBackgroundMode !== 'osm') {
+                redrawCanvasElements(); 
+            }
+        }
+
+        function downloadTransitScheduleXml() {
+            if (transitStops.length === 0 && transitLines.length === 0) {
+                alert("No transit data to export.");
+                return;
+            }
+            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE transitSchedule SYSTEM "http://www.matsim.org/files/dtd/transitSchedule_v2.dtd">\n<transitSchedule>\n`;
+            xml += `\t<transitStops>\n`;
+            transitStops.forEach(stop => {
+                let stopNode = nodes.find(n => n.id === stop.nodeId);
+                let xCoord = "0", yCoord = "0";
+                let outputCrs = outputCrsSelect.value; 
+                if (outputCrs === "") { 
+                    if (currentBackgroundMode === 'osm') {
+                        if (loadedNetworkCRS === "EPSG:4326") outputCrs = "wgs84";
+                        else if (loadedNetworkCRS === "EPSG:2056") outputCrs = "epsg2056";
+                        else outputCrs = "internal_leaflet"; 
+                    } else {
+                        outputCrs = "cartesian_canvas"; 
+                    }
+                }
+
+                if (stopNode) {
+                    if (outputCrs === 'wgs84' && stopNode.isOSM && stopNode.latlng) {
+                        xCoord = stopNode.latlng.lng.toFixed(6); yCoord = stopNode.latlng.lat.toFixed(6);
+                    } else if (outputCrs === 'epsg2056' && stopNode.isOSM && stopNode.latlng && typeof proj4 !== 'undefined' && proj4.defs["EPSG:2056"]) {
+                        try {
+                            const p = proj4("EPSG:4326", "EPSG:2056", [stopNode.latlng.lng, stopNode.latlng.lat]);
+                            xCoord = p[0].toFixed(1); yCoord = p[1].toFixed(1);
+                        } catch (e) {
+                            xCoord = (stop.x_schedule_orig !== undefined ? stop.x_schedule_orig : stopNode.x).toFixed(1);
+                            yCoord = (stop.y_schedule_orig !== undefined ? stop.y_schedule_orig : stopNode.y).toFixed(1);
+                            console.warn("Proj err for stop", stop.id, e);
+                        }
+                    } else if (outputCrs === 'cartesian_canvas' ) {
+                        xCoord = (stop.x_schedule_orig !== undefined ? stop.x_schedule_orig : stopNode.x).toFixed(2);
+                        yCoord = (stop.y_schedule_orig !== undefined ? stop.y_schedule_orig : stopNode.y).toFixed(2);
+                    } else { 
+                        xCoord = stopNode.x.toFixed(currentBackgroundMode === 'osm' ? 1 : 2);
+                        yCoord = stopNode.y.toFixed(currentBackgroundMode === 'osm' ? 1 : 2);
+                    }
+                } else {
+                    console.warn(`Node ${stop.nodeId} for stop ${stop.id} not found. Using stop's own original or internal coords.`);
+                    let fallbackX = (stop.x_schedule_orig !== undefined ? stop.x_schedule_orig : (stop.x || 0));
+                    let fallbackY = (stop.y_schedule_orig !== undefined ? stop.y_schedule_orig : (stop.y || 0));
+                     if (outputCrs === 'wgs84' && stop.latlng) { 
+                        xCoord = stop.latlng.lng.toFixed(6); yCoord = stop.latlng.lat.toFixed(6);
+                    } else if (outputCrs === 'epsg2056' && stop.latlng && typeof proj4 !== 'undefined' && proj4.defs["EPSG:2056"]) {
+                         try {
+                            const p = proj4("EPSG:4326", "EPSG:2056", [stop.latlng.lng, stop.latlng.lat]);
+                            xCoord = p[0].toFixed(1); yCoord = p[1].toFixed(1);
+                        } catch (e) {
+                            xCoord = fallbackX.toFixed(1); yCoord = fallbackY.toFixed(1);
+                        }
+                    } else {
+                        xCoord = fallbackX.toFixed(currentBackgroundMode === 'osm' ? 1: 2);
+                        yCoord = fallbackY.toFixed(currentBackgroundMode === 'osm' ? 1: 2);
+                    }
+                }
+                xml += `\t\t<stopFacility id="${stop.id}" x="${xCoord}" y="${yCoord}" linkRefId="${stop.linkRefId || ''}" name="${stop.name || ''}"`;
+                if (stop.stopAreaId && stop.stopAreaId.trim() !== "") {
+                    xml += ` stopAreaId="${stop.stopAreaId}"`;
+                }
+                xml += ` isBlocking="false"/>\n`; // Changed from isBlockingLane
+            });
+            xml += `\t</transitStops>\n\n`;
+            transitLines.forEach(line => {
+                xml += `\t<transitLine id="${line.id}" name="${line.name || ''}">\n`;
+                line.routeIds.forEach(routeId => {
+                    const route = transitRoutes.find(r => r.id === routeId);
+                    if (!route) return;
+                    xml += `\t\t<transitRoute id="${route.id}">\n\t\t\t<transportMode>${route.transportMode}</transportMode>\n`; 
+                    xml += `\t\t\t<routeProfile>\n`;
+                    route.stopProfiles.forEach(sp => {
+                        xml += `\t\t\t\t<stop refId="${sp.stopId}" arrivalOffset="${sp.arrivalOffset}" departureOffset="${sp.departureOffset}" awaitDeparture="${sp.awaitDeparture}"/>\n`;
+                    });
+                    xml += `\t\t\t</routeProfile>\n\t\t\t<route>\n`;
+                    if(route.linkIds) route.linkIds.forEach(linkId => {
+                        xml += `\t\t\t\t<link refId="${linkId}"/>\n`;
+                    });
+                    xml += `\t\t\t</route>\n\t\t\t<departures>\n`;
+                    route.departures.forEach(dep => {
+                        xml += `\t\t\t\t<departure id="${dep.id}" departureTime="${dep.time}" vehicleRefId="${dep.vehicleRefId}"/>\n`;
+                    });
+                    xml += `\t\t\t</departures>\n\t\t</transitRoute>\n`;
+                });
+                xml += `\t</transitLine>\n\n`;
+            });
+            xml += `</transitSchedule>`;
+            const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'transitSchedule.xml';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            console.log("Transit schedule XML downloaded.");
+        }
+
+        function downloadVehiclesXml() {
+            const actualVehicleTypesInUse = new Set();
+            definedVehicles.forEach(v => actualVehicleTypesInUse.add(v.typeId));
+            
+            transitRoutes.forEach(route => {
+                if (!route.departures || route.departures.length === 0) {
+                    const defaultVehTypeForMode = defaultVehicleTypes.find(dvt => dvt.networkMode === route.transportMode) || defaultVehicleTypes[0];
+                    actualVehicleTypesInUse.add(defaultVehTypeForMode.id);
+                } else {
+                    route.departures.forEach(dep => {
+                         const vehInst = definedVehicles.find(v => v.id === dep.vehicleRefId);
+                         if(vehInst) {
+                            actualVehicleTypesInUse.add(vehInst.typeId);
+                         } else { 
+                             const defaultVehTypeForMode = defaultVehicleTypes.find(dvt => dvt.networkMode === route.transportMode) || defaultVehicleTypes[0];
+                             actualVehicleTypesInUse.add(defaultVehTypeForMode.id);
+                             console.warn(`Vehicle instance ${dep.vehicleRefId} not in definedVehicles, but its type ${defaultVehTypeForMode.id} added to export based on route mode.`);
+                         }
+                    });
+                }
+            });
+
+            if (actualVehicleTypesInUse.size === 0 && definedVehicles.length === 0) {
+                alert("No vehicle data to export. Add some departures to routes or ensure routes have a transport mode.");
+                return;
+            }
+
+            let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<vehicleDefinitions xmlns="http://www.matsim.org/files/dtd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.matsim.org/files/dtd http://www.matsim.org/files/dtd/vehicleDefinitions_v2.0.xsd">\n\n`;
+            
+            defaultVehicleTypes.forEach(vt => {
+                if (!actualVehicleTypesInUse.has(vt.id)) return; 
+
+                xml += `\t<vehicleType id="${vt.id}">\n`;
+                
+                if (vt.attributes && Object.keys(vt.attributes).length > 0) {
+                    xml += `\t\t<attributes>\n`;
+                    for (const key in vt.attributes) {
+                        let attrClass = "java.lang.String"; // Default
+                        if (key === "railsimAcceleration" || key === "railsimMaxDeceleration") {
+                             attrClass = "java.lang.Double";
+                        } else { 
+                            if (typeof vt.attributes[key] === 'number') {
+                                attrClass = Number.isInteger(vt.attributes[key]) ? "java.lang.Integer" : "java.lang.Double";
+                            } else if (typeof vt.attributes[key] === 'boolean') {
+                                attrClass = "java.lang.Boolean";
+                            }
+                        }
+                        xml += `\t\t\t<attribute name="${key}" class="${attrClass}">${vt.attributes[key]}</attribute>\n`;
+                    }
+                    xml += `\t\t</attributes>\n`;
+                }
+                xml += `\t\t<capacity seats="${vt.capacity.seats}" standingRoomInPersons="${vt.capacity.standingRoomInPersons}"></capacity>\n`;
+                xml += `\t\t<length meter="${vt.length}"/>\n`;
+                xml += `\t\t<width meter="${vt.width}"/>\n`;
+                xml += `\t\t<maximumVelocity meterPerSecond="${vt.maximumVelocity}"/>\n`;
+                if (vt.costInformation) { // Check if costInformation property exists
+                    xml += `\t\t<costInformation></costInformation>\n`; 
+                }
+                xml += `\t\t<passengerCarEquivalents pce="${vt.passengerCarEquivalents}"/>\n`;
+                xml += `\t\t<networkMode networkMode="${vt.networkMode}"/>\n`;
+                xml += `\t\t<flowEfficiencyFactor factor="${vt.flowEfficiencyFactor}"/>\n`;
+                xml += `\t</vehicleType>\n\n`;
+            });
+
+            definedVehicles.forEach(vehicleInstance => {
+                if (actualVehicleTypesInUse.has(vehicleInstance.typeId)) { 
+                    xml += `\t<vehicle id="${vehicleInstance.id}" type="${vehicleInstance.typeId}"/>\n`;
+                }
+            });
+            xml += `\n</vehicleDefinitions>`;
+            const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'transitVehicles.xml'; // Changed filename
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            console.log("Transit Vehicles XML downloaded.");
+        }
+
+        function handleGeneralSelectClick(mouseX, mouseY, isShiftClick) {
+            let candidates = [];
+            if (currentDrawMode === 'select') {
+                if (showNodes) {
+                    const node = findNodeAtScreenCanvas(mouseX, mouseY);
+                    if (node) candidates.push(node);
+                }
+                if (showLinks) {
+                    const link = findLinkAtScreenCanvas(mouseX, mouseY);
+                    if (link) candidates.push(link);
+                }
+                if (showTransitStops) {
+                    const stop = findTransitStopAtScreenCanvas(mouseX, mouseY);
+                    if (stop) candidates.push(stop);
+                }
+                if (showTransitLines) {
+                    const route = findTransitRouteAtScreenCanvas(mouseX, mouseY);
+                    if (route) candidates.push(route);
+                }
+            }
+
+            if (candidates.length === 0) {
+                if (!isShiftClick) deselectAll();
+                if (currentDrawMode === 'select') {
+                    isMarqueeSelecting = true;
+                    marqueeStart = { x: mouseX, y: mouseY };
+                    marqueeEnd = { x: mouseX, y: mouseY };
+                    redrawCanvasElements();
+                }
+            } else if (candidates.length === 1) {
+                handleSelectElement(candidates[0], isShiftClick && (candidates[0].type !== 'transitStop' && candidates[0].type !== 'transitRoute'));
+            } else {
+                showOverlapChoiceDialog(candidates, mouseX, mouseY, isShiftClick);
+            }
+        }
+
+        function showOverlapChoiceDialog(elements, x, y, isShiftClick) { overlapOptionsContainer.innerHTML = ''; elements.forEach(el => { const btn = document.createElement('button'); btn.textContent = `${el.type.toUpperCase()}: ${el.id}`; btn.onclick = () => { handleSelectElement(el, isShiftClick && (el.type !== 'transitStop' && el.type !== 'transitRoute')); hideOverlapChoiceDialog(); }; overlapOptionsContainer.appendChild(btn); }); const dialogWidth = overlapChoiceDialog.offsetWidth || 200; const dialogHeight = overlapChoiceDialog.offsetHeight || 100; const editorRect = editorArea.getBoundingClientRect(); let left = x + 10; let top = y + 10; if (left + dialogWidth > editorRect.width) { left = x - dialogWidth - 10; } if (top + dialogHeight > editorRect.height) { top = y - dialogHeight - 10; } left = Math.max(10, left); top = Math.max(10, top); overlapChoiceDialog.style.left = `${left}px`; overlapChoiceDialog.style.top = `${top}px`; overlapChoiceDialog.classList.remove('hidden'); }
+        function hideOverlapChoiceDialog() { overlapChoiceDialog.classList.add('hidden'); }
+
+        function parseAndLoadTransitSchedule(xmlStr, stopCoordsCrs) {
+            console.log("Parsing transit schedule with stop CRS:", stopCoordsCrs);
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlStr, "application/xml");
+
+            if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+                throw new Error("Transit Schedule XML parsing error.");
+            }
+
+            const hasStopFacilities = xmlDoc.getElementsByTagName("stopFacility").length > 0;
+            const hasRouteLinks = xmlDoc.querySelector("transitRoute > route > link") !== null;
+
+            if (nodes.length === 0 && (hasStopFacilities || hasRouteLinks)) {
+                alert("Cannot load transit schedule: The network is empty. Load a network first if the schedule references network elements or stop coordinates.");
+                return;
+            }
+            if (links.length === 0 && hasRouteLinks) {
+                 alert("Cannot load transit schedule: The network has no links, but the schedule defines routes with links. Load a network with links first.");
+                return;
+            }
+
+            deselectAll();
+            
+            const existingStops = [...transitStops];
+            transitStops = [];
+            transitLines = [];
+            transitRoutes = [];
+            
+            if (osmTransitStopLayerGroup) osmTransitStopLayerGroup.clearLayers();
+            if (osmTransitRouteLayerGroup) osmTransitRouteLayerGroup.clearLayers();
+
+            let maxStopIdNum = getNumericIdPart(transitStops.map(ts=>ts.id).sort((a,b)=>getNumericIdPart(b)-getNumericIdPart(a))[0] || "ts0");
+            let maxLineIdNum = getNumericIdPart(transitLines.map(tl=>tl.id).sort((a,b)=>getNumericIdPart(b)-getNumericIdPart(a))[0] || "tl0");
+            let maxRouteIdNum = getNumericIdPart(transitRoutes.map(tr=>tr.id).sort((a,b)=>getNumericIdPart(b)-getNumericIdPart(a))[0] || "tr0");
+            let maxDepartureIdNum = 0; 
+            let maxVehicleIdNum = getNumericIdPart(definedVehicles.map(dv=>dv.id).sort((a,b)=>getNumericIdPart(b)-getNumericIdPart(a))[0] || "veh_0");
+
+
+            const xmlStopFacilities = xmlDoc.getElementsByTagName("stopFacility");
+            for (let i = 0; i < xmlStopFacilities.length; i++) {
+                const stopXml = xmlStopFacilities[i];
+                const stopId = stopXml.getAttribute("id");
+                const stopX = parseFloat(stopXml.getAttribute("x"));
+                const stopY = parseFloat(stopXml.getAttribute("y"));
+                const linkRefId = stopXml.getAttribute("linkRefId");
+                const stopName = stopXml.getAttribute("name") || `Stop ${stopId}`;
+                const stopAreaId = stopXml.getAttribute("stopAreaId") || "";
+
+                if (!stopId || isNaN(stopX) || isNaN(stopY)) {
+                    console.warn(`Skipping stop facility with invalid ID or coordinates:`, stopXml);
+                    continue;
+                }
+                
+                let stopLatlng = null; 
+                let internalX = stopX, internalY = stopY; 
+
+                if (currentBackgroundMode === 'osm') {
+                    if (stopCoordsCrs === "EPSG:4326") {
+                        stopLatlng = L.latLng(stopY, stopX);
+                    } else if (stopCoordsCrs === "EPSG:2056" && typeof proj4 !== 'undefined' && proj4.defs["EPSG:2056"]) {
+                        try {
+                            const p = proj4("EPSG:2056", "EPSG:4326", [stopX, stopY]);
+                            stopLatlng = L.latLng(p[1], p[0]);
+                        } catch (e) { console.error(`Proj4js error projecting stop ${stopId} from ${stopCoordsCrs}: ${e.message}.`); }
+                    } else if (stopCoordsCrs === "PROJ_PIXELS" && leafletMap) {
+                        try { stopLatlng = leafletMap.unproject([stopX, stopY]); } catch (e) { console.error("Error unprojecting stop:", e); }
+                    } else if (stopCoordsCrs === "CARTESIAN" && leafletMap) { 
+                        console.warn(`Stop ${stopId} has Cartesian coords, interpreting as Leaflet pixels for node matching.`);
+                         try { stopLatlng = leafletMap.unproject([stopX, stopY]); } catch (e) { console.error("Error unprojecting stop:", e); }
+                    }
+
+                    if (stopLatlng && leafletMap) { 
+                        const projected = leafletMap.project(stopLatlng); 
+                        internalX = projected.x;
+                        internalY = projected.y;
+                    } else if (!stopLatlng && stopCoordsCrs !== "PROJ_PIXELS" && stopCoordsCrs !== "CARTESIAN") { 
+                         console.warn(`Could not get Leaflet LatLng for stop ${stopId} with CRS ${stopCoordsCrs}. Node matching might be inaccurate.`);
+                    }
+                }
+                
+
+                let closestNode = null;
+                let minDistanceSq = Infinity;
+
+                nodes.forEach(netNode => {
+                    let distSq;
+                     if (netNode.isOSM && currentBackgroundMode === 'osm') { 
+                        distSq = (netNode.x - internalX) ** 2 + (netNode.y - internalY) ** 2;
+                    } else if (!netNode.isOSM && currentBackgroundMode !== 'osm') { 
+                        distSq = (netNode.x - stopX) ** 2 + (netNode.y - stopY) ** 2;
+                    } else { 
+                        distSq = Infinity; 
+                    }
+                    if (distSq < minDistanceSq) {
+                        minDistanceSq = distSq;
+                        closestNode = netNode;
+                    }
+                });
+
+                if (closestNode) {
+                    let existingStop = transitStops.find(s => s.id === stopId);
+                    if (existingStop) {
+                         console.warn(`Transit stop ${stopId} already exists. Updating its properties.`);
+                         existingStop.nodeId = closestNode.id;
+                         existingStop.name = stopName;
+                         existingStop.linkRefId = linkRefId;
+                         existingStop.stopAreaId = stopAreaId;
+                         existingStop.x_schedule_orig = stopX; 
+                         existingStop.y_schedule_orig = stopY;
+                         existingStop.isOSM = closestNode.isOSM;
+                         if (closestNode.isOSM) {
+                            existingStop.x = closestNode.x; 
+                            existingStop.y = closestNode.y;
+                            existingStop.latlng = stopLatlng || closestNode.latlng; 
+                            if(existingStop.leafletLayer) existingStop.leafletLayer.setLatLng(existingStop.latlng).bindTooltip(`${existingStop.id} (${existingStop.name})`);
+                         } else {
+                            existingStop.x = closestNode.x; 
+                            existingStop.y = closestNode.y;
+                            existingStop.latlng = null;
+                         }
+                    } else {
+                        const tempNextId = nextTransitStopId; 
+                        nextTransitStopId = getNumericIdPart(stopId) || tempNextId; 
+                        
+                        const newStop = addTransitStop(closestNode); 
+                        nextTransitStopId = tempNextId; 
+
+                        if (newStop) {
+                            newStop.id = stopId; 
+                            newStop.name = stopName;
+                            newStop.linkRefId = linkRefId;
+                            newStop.stopAreaId = stopAreaId;
+                            
+                            newStop.x_schedule_orig = stopX; 
+                            newStop.y_schedule_orig = stopY;
+                             if (closestNode.isOSM) {
+                                newStop.latlng = stopLatlng || closestNode.latlng;
+                                if(newStop.leafletLayer) newStop.leafletLayer.setLatLng(newStop.latlng).bindTooltip(`${newStop.id} (${newStop.name})`);
+                             }
+                        } else {
+                             console.warn(`Failed to create internal stop object for ${stopId} at node ${closestNode.id}.`);
+                        }
+                    }
+                    const numId = getNumericIdPart(stopId);
+                    if (numId > maxStopIdNum) maxStopIdNum = numId;
+
+                } else {
+                    console.warn(`Could not find a suitable network node for stop facility ${stopId}. Stop not created.`);
+                }
+            }
+            nextTransitStopId = Math.max(nextTransitStopId, maxStopIdNum + 1);
+
+            const xmlTransitLines = xmlDoc.getElementsByTagName("transitLine");
+            for (let i = 0; i < xmlTransitLines.length; i++) {
+                const lineXml = xmlTransitLines[i];
+                const lineId = lineXml.getAttribute("id");
+                const lineName = lineXml.getAttribute("name") || `Line ${lineId}`;
+                
+                if (!lineId) { console.warn("Skipping transit line with no ID:", lineXml); continue; }
+
+                const newLine = { id: lineId, name: lineName, routeIds: [], type: 'transitLine' };
+                
+                const xmlTransitRoutes = lineXml.getElementsByTagName("transitRoute");
+                for (let j = 0; j < xmlTransitRoutes.length; j++) {
+                    const routeXml = xmlTransitRoutes[j];
+                    const routeId = routeXml.getAttribute("id");
+                    const transportMode = routeXml.querySelector("transportMode")?.textContent || "pt";
+
+                    if (!routeId) { console.warn("Skipping transit route with no ID:", routeXml); continue; }
+
+                    const newRoute = {
+                        id: routeId, lineId: lineId, name: `Route for ${lineId} (${routeId})`, 
+                        transportMode: transportMode,
+                        stopProfiles: [], linkIds: [], departures: [],
+                        isOSM: (currentBackgroundMode === 'osm'), type: 'transitRoute'
+                    };
+
+                    const profileStopsXml = routeXml.querySelectorAll("routeProfile > stop");
+                    profileStopsXml.forEach(psXml => {
+                        const stopRefId = psXml.getAttribute("refId");
+                        const stopObj = transitStops.find(s => s.id === stopRefId);
+                        if (stopObj) {
+                            newRoute.stopProfiles.push({
+                                stopId: stopRefId,
+                                nodeId: stopObj.nodeId, 
+                                arrivalOffset: psXml.getAttribute("arrivalOffset") || "00:00:00",
+                                departureOffset: psXml.getAttribute("departureOffset") || "00:00:00",
+                                awaitDeparture: psXml.getAttribute("awaitDeparture") === "true"
+                            });
+                        } else {
+                            console.warn(`StopFacility ${stopRefId} in route ${routeId} not found or not created. Skipping from profile.`);
+                        }
+                    });
+                    
+                    const routeLinksXml = routeXml.querySelectorAll("route > link");
+                    routeLinksXml.forEach(rlXml => {
+                        const linkRef = rlXml.getAttribute("refId");
+                        if (links.find(l => l.id === linkRef)) {
+                            newRoute.linkIds.push(linkRef);
+                        } else {
+                             console.warn(`Link ${linkRef} in route ${routeId} not found in network. Skipping from route.`);
+                        }
+                    });
+
+                    const departuresXml = routeXml.querySelectorAll("departures > departure");
+                    departuresXml.forEach(depXml => {
+                        const depId = depXml.getAttribute("id");
+                        const depTime = depXml.getAttribute("departureTime");
+                        const vehRefId = depXml.getAttribute("vehicleRefId");
+
+                        if (!depId || !depTime || !vehRefId) {
+                             console.warn(`Skipping departure with missing attributes in route ${routeId}:`, depXml); return;
+                        }
+                        newRoute.departures.push({ id: depId, time: depTime, vehicleRefId: vehRefId });
+                        
+                        const numDepId = getNumericIdPart(depId);
+                        if (numDepId > maxDepartureIdNum) maxDepartureIdNum = numDepId;
+
+                        if (!definedVehicles.find(v => v.id === vehRefId)) {
+                            const defaultVehType = defaultVehicleTypes.find(dvt => dvt.networkMode === transportMode) || defaultVehicleTypes[0];
+                            definedVehicles.push({ id: vehRefId, typeId: defaultVehType.id });
+                            
+                            const numVehId = getNumericIdPart(vehRefId);
+                             if (numVehId > maxVehicleIdNum) maxVehicleIdNum = numVehId;
+                        }
+                    });
+                    transitRoutes.push(newRoute);
+                    newLine.routeIds.push(routeId);
+
+                    const numRouteId = getNumericIdPart(routeId);
+                    if (numRouteId > maxRouteIdNum) maxRouteIdNum = numRouteId;
+                }
+                transitLines.push(newLine);
+                const numLineId = getNumericIdPart(lineId);
+                if (numLineId > maxLineIdNum) maxLineIdNum = numLineId;
+            }
+
+            nextTransitLineId = Math.max(nextTransitLineId, maxLineIdNum + 1);
+            nextTransitRouteId = Math.max(nextTransitRouteId, maxRouteIdNum + 1);
+            nextDepartureId = Math.max(nextDepartureId, maxDepartureIdNum + 1);
+            vehicleIdCounter = Math.max(vehicleIdCounter, maxVehicleIdNum + 1);
+
+            trDefaultVehicleTypeSelect.innerHTML = ''; 
+            defaultVehicleTypes.forEach(vt => { const opt = document.createElement('option'); opt.value = vt.id; opt.textContent = vt.id; trDefaultVehicleTypeSelect.appendChild(opt); });  
+            definedVehicles.forEach(dv => { 
+                if (!defaultVehicleTypes.some(dvt => dvt.id === dv.typeId)) {
+                    const opt = document.createElement('option'); opt.value = dv.typeId; opt.textContent = `${dv.typeId} (loaded)`; trDefaultVehicleTypeSelect.appendChild(opt);
+                }
+            });
+
+
+            if (currentBackgroundMode === 'osm') {
+                transitRoutes.forEach(route => { if (route.isOSM) drawTransitRouteOSM(route); });
+            } else {
+                redrawCanvasElements();
+            }
+            
+            disableBackgroundSwitching();
+            updateExportCrsOptions(); 
+            alert(`Transit Schedule loaded: ${transitStops.length} stops, ${transitLines.length} lines, ${transitRoutes.length} routes.`);
+            console.log("Transit schedule parsing complete.");
+        }
+
+
+        // --- Initial Setup ---
+        setDrawMode('addNodes'); 
+        switchBackgroundMode(bgModeSelect.value); 
+        resizeEditorElements(); 
+        enableBackgroundSwitching();
+    </script>
+</body>
+</html>
